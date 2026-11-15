@@ -47,6 +47,9 @@
       footer { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px 14px; }
       footer button { padding: 5px 10px; }
       #estado { font-size: 12px; color: var(--suave); }
+      .segmentos { display: flex; gap: 4px; margin-bottom: 8px; padding: 3px; border: 1px solid var(--borde); border-radius: 8px; background: var(--fila); }
+      .segmentos button { flex: 1; padding: 5px 6px; border: 0; border-radius: 6px; background: transparent; font-size: 12px; color: var(--suave); }
+      .segmentos button[aria-selected="true"] { background: var(--fondo); color: var(--texto); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / .08); }
     </style>
   </head>
   <body>
@@ -55,11 +58,11 @@
     <section>
       <h2>Aplicar en</h2>
       <div id="docs"></div>
-      <p class="nota">Facturas de venta usa otra pantalla en Alegra y no se puede personalizar.</p>
     </section>
 
     <section>
       <h2>Columnas</h2>
+      <div id="familias" class="segmentos" role="tablist" aria-label="Grilla a configurar"></div>
       <ol id="columnas"></ol>
       <p class="nota">Los cambios se aplican al instante en las pestañas de Alegra abiertas. La tecla Tab sigue el orden original.</p>
     </section>

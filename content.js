@@ -1,42 +1,55 @@
 // Alegra: columnas de la grilla de ítems — content script.
 //
-// En presupuestos y remitos de Alegra permite:
-//   - sumar columnas calculadas (Subtotal c/IVA, Precio c/IVA);
+// En presupuestos, remitos y facturas de venta de Alegra permite:
+//   - sumar columnas calculadas (Subtotal/Total c/IVA, Precio c/IVA);
 //   - ocultar columnas de Alegra;
 //   - cambiar el orden de las columnas.
 // Solo LEE la pantalla: no toca inputs ni envía nada. La config viene del popup (config.js).
 //
-// La grilla es Vue: un único contenedor `.dui-items-group-table__table` con display:grid y
-// todas las celdas planas (header + N celdas por fila). Para no pelearnos con Vue:
-//   - NUNCA movemos ni borramos nodos de Vue; solo les ponemos atributos data-civa-c (columna)
-//     y data-civa-r (fila), y una hoja de estilo propia ubica cada celda con grid-column /
-//     grid-row explícitos (!important). Así el orden visual cambia sin tocar el DOM de Vue.
+// Alegra tiene dos grillas distintas (ver FAMILIAS en config.js):
+//   - "nueva" (presupuestos, remitos): un único `.dui-items-group-table__table` con
+//     display:grid y todas las celdas planas (header + N celdas por fila);
+//   - "factura" (facturas de venta): una <table> en `.items-table` con un <tr> por línea.
+// Las dos se llevan al mismo modelo (encabezados + filas de N celdas) y se ubican igual:
+//   - NUNCA movemos ni borramos nodos de Alegra; solo les ponemos atributos data-civa-c
+//     (columna) y data-civa-r (fila), y una hoja de estilo propia ubica cada celda con
+//     grid-column / grid-row explícitos (!important). La <table> de facturas se convierte en
+//     grid con sus <tr> en display:contents, solo mientras haya algo personalizado.
 //   - Las celdas calculadas son nodos nuestros, agregados como hermanos.
-// Si la estructura no es la esperada, la tabla queda exactamente como la dibuja Alegra.
+// Si la estructura no es la esperada, la grilla queda exactamente como la dibuja Alegra.
 // Limitación conocida: el orden de Tab sigue el orden original de Alegra.
 
 /* global CIVA_CONFIG */
 ;(() => {
   "use strict"
 
-  const TABLA = ".dui-items-group-table__table"
+  const SEL_NUEVA = ".dui-items-group-table__table"
+  const SEL_FACTURA = ".items-table table"
   const ATTR_TABLA = "data-civa"
   const ATTR_COL = "data-civa-c"
   const ATTR_FILA = "data-civa-r"
   const CLASE_PROPIA = "civa-propia"
+  const STYLE_ID = "civa-style"
+
+  // Si la extensión se recargó con la página abierta, quedan restos de la instancia anterior.
+  document.querySelectorAll(`#${STYLE_ID}, .${CLASE_PROPIA}, .civa-cell, .civa-header`).forEach((el) => el.remove())
+  document.querySelectorAll(`[${ATTR_TABLA}], [${ATTR_COL}], [${ATTR_FILA}]`).forEach((el) => {
+    el.removeAttribute(ATTR_TABLA)
+    el.removeAttribute(ATTR_COL)
+    el.removeAttribute(ATTR_FILA)
+  })
 
   const style = document.createElement("style")
-  style.id = "civa-style"
+  style.id = STYLE_ID
 
   let cfg = null
 
   /** ancla nativa → Map(idExtra → nodo nuestro) */
   const propiasDe = new WeakMap()
+  /** <table> de facturas → anchos medidos en su diseño original, por etiqueta */
+  const anchosDe = new WeakMap()
 
   const esPropia = (el) => el.classList.contains(CLASE_PROPIA)
-  const esHeader = (el) =>
-    el.classList.contains("dui-items-table-header-cell") || el.classList.contains("dui-items-group-table__drag-header")
-  const esInicioFila = (el) => el.classList.contains("dui-items-group-table__drag-cell")
 
   // ── Números ──────────────────────────────────────────────────────────────
 
@@ -70,10 +83,13 @@
     return (valor < 0 ? "-" : "") + (prefijo || "$") + txt
   }
 
-  /** "IVA - (21.00%)" → 21 ; "Ninguno" / "" → 0 ; texto sin % (p. ej. "2 impuestos") → null */
-  function tasaImpuesto(texto) {
+  /**
+   * "IVA - (21.00%)" → 21 ; "Ninguno" / "" / el placeholder (= título de la columna) → 0 ;
+   * texto sin % (p. ej. "2 impuestos") → null
+   */
+  function tasaImpuesto(texto, placeholder) {
     const t = (texto || "").trim()
-    if (!t || /^ningun/i.test(t)) return 0
+    if (!t || /^ningun/i.test(t) || t === placeholder) return 0
     const tasas = [...t.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map((m) => Number(m[1].replace(",", ".")))
     if (!tasas.length) return null
     return tasas.reduce((a, b) => a + b, 0)
@@ -89,19 +105,26 @@
 
   /** Valor de una columna calculada para una fila: { texto, ayuda } */
   function calcular(id, fila, idx) {
-    const sub = parseMonto(textoCelda(fila[idx.sub]))
-    const tasa = idx.imp >= 0 ? tasaImpuesto(textoCelda(fila[idx.imp])) : null
+    if (idx.importe < 0) return { texto: "—", ayuda: "No se encontró la columna del importe" }
+    const importe = parseMonto(textoCelda(fila[idx.importe]))
+    const tasa = idx.impuesto >= 0 ? tasaImpuesto(textoCelda(fila[idx.impuesto]), idx.etiquetaImpuesto) : null
     if (tasa == null) return { texto: "—", ayuda: "No se pudo leer la tasa del impuesto de la línea" }
-    const decimal = (sub && sub.decimal) || "."
-    const prefijo = (sub && sub.prefijo) || "$"
+    const decimal = (importe && importe.decimal) || "."
+    const prefijo = (importe && importe.prefijo) || "$"
     if (id === "x:subtotalIva") {
-      if (!sub) return { texto: "—", ayuda: "No se pudo leer el subtotal de la línea" }
-      return { texto: formatMonto(redondear(sub.valor * (1 + tasa / 100)), decimal, prefijo), ayuda: `Subtotal + ${tasa}%` }
+      if (!importe) return { texto: "—", ayuda: "No se pudo leer el importe de la línea" }
+      return {
+        texto: formatMonto(redondear(importe.valor * (1 + tasa / 100)), decimal, prefijo),
+        ayuda: `Importe + ${tasa}%`,
+      }
     }
     if (id === "x:precioIva") {
       const precio = idx.precio >= 0 ? parseMonto(textoCelda(fila[idx.precio])) : null
       if (!precio) return { texto: formatMonto(0, decimal, prefijo), ayuda: "Línea sin precio" }
-      return { texto: formatMonto(redondear(precio.valor * (1 + tasa / 100)), decimal, prefijo), ayuda: `Precio + ${tasa}%` }
+      return {
+        texto: formatMonto(redondear(precio.valor * (1 + tasa / 100)), decimal, prefijo),
+        ayuda: `Precio + ${tasa}%`,
+      }
     }
     return { texto: "", ayuda: "" }
   }
@@ -127,6 +150,97 @@
 
   const pct = (t) => (/^[\d.]+%$/.test(t) ? Number(t.slice(0, -1)) : null)
 
+  // ── Lectura de cada grilla al modelo común ───────────────────────────────
+  //
+  // Modelo: { headers: [celdas], filas: [[celdas]], sueltos: [elementos], etiquetas: [textos],
+  //           tracks(final) → grid-template-columns, css(T) → reglas extra }
+
+  function leerNueva(tabla) {
+    const esHeader = (el) =>
+      el.classList.contains("dui-items-table-header-cell") || el.classList.contains("dui-items-group-table__drag-header")
+    const esInicioFila = (el) => el.classList.contains("dui-items-group-table__drag-cell")
+
+    const nativos = [...tabla.children].filter((el) => !esPropia(el))
+    const headers = []
+    for (const el of nativos) {
+      if (!esHeader(el)) break
+      headers.push(el)
+    }
+    const n = headers.length
+    const cols = tokens(tabla.style.gridTemplateColumns)
+    if (n === 0 || cols.length !== n) return null
+
+    // filas: grupos de n celdas que empiezan con la celda de arrastre; el resto (botón
+    // «Agregar línea», etc.) va a filas propias de ancho completo
+    const filas = []
+    const sueltos = []
+    for (let i = n; i < nativos.length; ) {
+      if (esInicioFila(nativos[i]) && i + n <= nativos.length) {
+        const fila = nativos.slice(i, i + n)
+        if (fila.slice(1).some(esInicioFila)) return null // fila incompleta: estructura desconocida
+        filas.push(fila)
+        i += n
+      } else sueltos.push(nativos[i++])
+    }
+
+    return {
+      headers,
+      filas,
+      sueltos,
+      etiquetas: headers.map((h) => h.textContent.trim()),
+      // las columnas en % se reescalan para ocupar el mismo % total que antes
+      tracks(final) {
+        const pctOriginal = cols.reduce((a, t) => a + (pct(t) ?? 0), 0)
+        const ts = final.map((f) => (f.x ? CIVA_CONFIG.EXTRAS[f.x].ancho + "%" : cols[f.nat]))
+        const pctNuevo = ts.reduce((a, t) => a + (pct(t) ?? 0), 0)
+        const factor = pctNuevo > 0 && pctOriginal > 0 ? pctOriginal / pctNuevo : 1
+        return ts.map((t) => (pct(t) == null ? t : (pct(t) * factor).toFixed(2) + "%")).join(" ")
+      },
+      css: () => [],
+    }
+  }
+
+  function leerFactura(tabla) {
+    const trs = [...tabla.rows]
+    if (!trs.length || !trs[0].classList.contains("header")) return null
+    const celdas = (tr) => [...tr.cells].filter((c) => !esPropia(c))
+    const headers = celdas(trs[0])
+    const n = headers.length
+    const etiquetas = headers.map((h) => h.textContent.trim())
+    const filas = trs.slice(1).map(celdas)
+    if (!n || filas.some((f) => f.length !== n)) return null
+
+    // anchos del diseño original de Alegra: se miden mientras la tabla no está intervenida
+    let anchos = anchosDe.get(tabla)
+    if (!tabla.hasAttribute(ATTR_TABLA) || !anchos) {
+      const medidos = headers.map((h) => h.getBoundingClientRect().width)
+      if (medidos.some((w) => !(w > 0))) return null // tabla oculta: no hay con qué medir
+      anchos = new Map(etiquetas.map((e, i) => [i, medidos[i]]))
+      anchosDe.set(tabla, anchos)
+    }
+    const total = [...anchos.values()].reduce((a, b) => a + b, 0)
+
+    return {
+      headers,
+      filas,
+      sueltos: [],
+      etiquetas,
+      tracks(final) {
+        return final
+          .map((f) => {
+            const w = f.x ? (total * CIVA_CONFIG.EXTRAS[f.x].ancho) / 100 : anchos.get(f.nat)
+            return `minmax(0,${w.toFixed(1)}fr)`
+          })
+          .join(" ")
+      },
+      css: (T) => [
+        `${T}{display:grid !important}`,
+        `${T}>thead,${T}>tbody,${T}>tfoot,${T} tr{display:contents !important}`,
+        `${T} [${ATTR_FILA}]{display:flex;flex-direction:column;justify-content:center;min-width:0}`,
+      ],
+    }
+  }
+
   // ── Nodos propios ────────────────────────────────────────────────────────
 
   /** copia class y los data-v-* (estilos scoped de Vue) del ancla, sin data-test ni keys de drag */
@@ -136,22 +250,30 @@
     }
   }
 
-  function propia(ancla, id, esCabecera, modeloP) {
+  function propia(ancla, id, familia, esCabecera, modelo) {
     let mapa = propiasDe.get(ancla)
     if (!mapa) propiasDe.set(ancla, (mapa = new Map()))
     let el = mapa.get(id)
     if (!el) {
-      el = document.createElement("div")
-      clonarAtributos(ancla, el)
+      // En la tabla de facturas la celda tiene que ser td/th como su ancla, y SIN las clases de
+      // Alegra (`total`, `price`…): su código podría buscar celdas por esas clases.
+      const esTabla = /^T[DH]$/.test(ancla.tagName)
+      el = document.createElement(esTabla ? ancla.tagName.toLowerCase() : "div")
+      if (esTabla) el.style.padding = "0 8px"
+      else clonarAtributos(modelo || ancla, el)
       el.classList.add(CLASE_PROPIA)
       if (esCabecera) {
         el.classList.add("justify-end")
-        el.textContent = CIVA_CONFIG.titulo(id)
+        el.style.textAlign = "right"
+        el.textContent = CIVA_CONFIG.titulo(familia, id)
         el.title = CIVA_CONFIG.EXTRAS[id].ayuda + " (agregado por la extensión)"
       } else {
         const p = document.createElement("p")
-        p.className = (modeloP && modeloP.className) || "text-right text-sm leading-8 mt-1"
+        const pModelo = !esTabla && modelo && modelo.querySelector("p")
+        p.className = (pModelo && pModelo.className) || "text-right text-sm leading-8 mt-1"
         p.style.fontWeight = "600"
+        p.style.textAlign = "right"
+        p.style.margin = pModelo ? "" : "0"
         el.appendChild(p)
       }
       mapa.set(id, el)
@@ -172,13 +294,11 @@
   // ── Sincronización ───────────────────────────────────────────────────────
 
   function limpiarTabla(tabla) {
-    for (const el of [...tabla.children]) {
-      if (esPropia(el)) el.remove()
-      else {
-        el.removeAttribute(ATTR_COL)
-        el.removeAttribute(ATTR_FILA)
-      }
-    }
+    tabla.querySelectorAll(`.${CLASE_PROPIA}`).forEach((el) => el.remove())
+    tabla.querySelectorAll(`[${ATTR_COL}], [${ATTR_FILA}]`).forEach((el) => {
+      el.removeAttribute(ATTR_COL)
+      el.removeAttribute(ATTR_FILA)
+    })
     tabla.removeAttribute(ATTR_TABLA)
   }
 
@@ -188,35 +308,16 @@
     if (style.isConnected) style.remove()
   }
 
-  /** Arma la grilla de una tabla según la config. Devuelve el CSS o null (tabla sin tocar). */
-  function sincronizarTabla(tabla, nTabla) {
-    const nativos = [...tabla.children].filter((el) => !esPropia(el))
-    const headers = []
-    for (const el of nativos) {
-      if (!esHeader(el)) break
-      headers.push(el)
-    }
+  /** Arma una grilla según la config. Devuelve el CSS o null (grilla sin tocar). */
+  function sincronizarTabla(tabla, nTabla, familia, est) {
+    const { headers, filas, sueltos, etiquetas } = est
     const n = headers.length
-    const cols = tokens(tabla.style.gridTemplateColumns)
-    if (n === 0 || cols.length !== n) return null
-    const etiquetas = headers.map((h) => h.textContent.trim())
+    const base = CIVA_CONFIG.FAMILIAS[familia].base
     const idx = {
-      sub: etiquetas.indexOf("Subtotal"),
-      imp: etiquetas.indexOf("Impuesto"),
-      precio: etiquetas.indexOf("Precio"),
-    }
-
-    // filas: grupos de n celdas que empiezan con la celda de arrastre; el resto (botón
-    // «Agregar línea», etc.) va a filas propias de ancho completo
-    const filas = []
-    const sueltos = []
-    for (let i = n; i < nativos.length; ) {
-      if (esInicioFila(nativos[i]) && i + n <= nativos.length) {
-        const fila = nativos.slice(i, i + n)
-        if (fila.slice(1).some(esInicioFila)) return null // fila incompleta: estructura desconocida
-        filas.push(fila)
-        i += n
-      } else sueltos.push(nativos[i++])
+      importe: etiquetas.indexOf(base.importe),
+      impuesto: etiquetas.indexOf(base.impuesto),
+      precio: etiquetas.indexOf(base.precio),
+      etiquetaImpuesto: base.impuesto,
     }
 
     // columnas fijas de Alegra: sin título a la izquierda (arrastre, checkbox) y a la derecha (menú)
@@ -229,7 +330,7 @@
     const final = []
     for (let i = 0; i < izq; i++) final.push({ nat: i })
     const usadas = new Set()
-    for (const c of cfg.columnas) {
+    for (const c of cfg.columnas[familia]) {
       if (c.id.startsWith("x:")) {
         if (c.visible && CIVA_CONFIG.EXTRAS[c.id]) final.push({ x: c.id })
         continue
@@ -242,16 +343,9 @@
     for (let i = izq; i < der; i++) if (!usadas.has(i)) final.push({ nat: i })
     for (let i = der; i < n; i++) final.push({ nat: i })
 
-    const sinCambios = final.length === n && final.every((f, k) => f.nat === k)
-    if (sinCambios) return null
+    if (final.length === n && final.every((f, k) => f.nat === k)) return null // sin cambios
 
-    // anchos: las columnas en % se reescalan para ocupar el mismo % total que antes
-    const pctOriginal = cols.reduce((a, t) => a + (pct(t) ?? 0), 0)
-    const tracks = final.map((f) => (f.x ? CIVA_CONFIG.EXTRAS[f.x].ancho + "%" : cols[f.nat]))
-    const pctNuevo = tracks.reduce((a, t) => a + (pct(t) ?? 0), 0)
-    const factor = pctNuevo > 0 && pctOriginal > 0 ? pctOriginal / pctNuevo : 1
-    const template = tracks.map((t) => (pct(t) == null ? t : (pct(t) * factor).toFixed(2) + "%")).join(" ")
-
+    const template = est.tracks(final)
     const posNat = new Map(final.map((f, k) => [f.nat, k + 1]).filter(([i]) => i !== undefined))
     const extras = final.map((f, k) => [f.x, k + 1]).filter(([x]) => x)
     const deseadas = new Set()
@@ -261,16 +355,17 @@
         setAttr(el, ATTR_COL, String(posNat.get(i) || 0))
         setAttr(el, ATTR_FILA, String(fila))
       })
+      const modelo = idx.importe >= 0 ? grupo[idx.importe] : null
       let previo = grupo[n - 1]
       for (const [id, pos] of extras) {
-        const el = propia(grupo[n - 1], id, esCabecera, idx.sub >= 0 ? grupo[idx.sub].querySelector("p") : null)
+        const el = propia(grupo[n - 1], id, familia, esCabecera, modelo)
         if (previo.nextElementSibling !== el) previo.after(el)
         previo = el
         setAttr(el, ATTR_COL, String(pos))
         setAttr(el, ATTR_FILA, String(fila))
         deseadas.add(el)
         if (!esCabecera) {
-          const { texto, ayuda } = idx.sub >= 0 ? calcular(id, grupo, idx) : { texto: "—", ayuda: "Sin columna Subtotal" }
+          const { texto, ayuda } = calcular(id, grupo, idx)
           setTexto(el, texto, ayuda)
         }
       }
@@ -282,18 +377,21 @@
       setAttr(el, ATTR_COL, "full")
       setAttr(el, ATTR_FILA, String(filas.length + 2 + k))
     })
-    for (const el of [...tabla.children]) if (esPropia(el) && !deseadas.has(el)) el.remove()
+    tabla.querySelectorAll(`.${CLASE_PROPIA}`).forEach((el) => {
+      if (!deseadas.has(el)) el.remove()
+    })
 
     setAttr(tabla, ATTR_TABLA, String(nTabla))
-    const T = `${TABLA}[${ATTR_TABLA}="${nTabla}"]`
+    const T = `[${ATTR_TABLA}="${nTabla}"]`
     const reglas = [
+      ...est.css(T),
       `${T}{grid-template-columns:${template} !important;grid-auto-flow:row !important}`,
-      `${T}>[${ATTR_COL}="0"]{display:none !important}`,
-      `${T}>[${ATTR_COL}="full"]{grid-column:1 / -1 !important}`,
+      `${T} [${ATTR_COL}="0"]{display:none !important}`,
+      `${T} [${ATTR_COL}="full"]{grid-column:1 / -1 !important}`,
     ]
-    for (let k = 1; k <= final.length; k++) reglas.push(`${T}>[${ATTR_COL}="${k}"]{grid-column:${k} !important}`)
+    for (let k = 1; k <= final.length; k++) reglas.push(`${T} [${ATTR_COL}="${k}"]{grid-column:${k} !important}`)
     const totalFilas = filas.length + 1 + sueltos.length
-    for (let r = 1; r <= totalFilas; r++) reglas.push(`${T}>[${ATTR_FILA}="${r}"]{grid-row:${r} !important}`)
+    for (let r = 1; r <= totalFilas; r++) reglas.push(`${T} [${ATTR_FILA}="${r}"]{grid-row:${r} !important}`)
     return reglas.join("\n")
   }
 
@@ -311,9 +409,13 @@
     try {
       const doc = docActual()
       if (!doc || !cfg.docs[doc]) return limpiar()
+      const familia = CIVA_CONFIG.DOCS[doc].familia
+      const selector = familia === "factura" ? SEL_FACTURA : SEL_NUEVA
+      const leer = familia === "factura" ? leerFactura : leerNueva
       const reglas = []
-      document.querySelectorAll(TABLA).forEach((tabla, k) => {
-        const css = sincronizarTabla(tabla, k)
+      document.querySelectorAll(selector).forEach((tabla, k) => {
+        const est = leer(tabla)
+        const css = est && sincronizarTabla(tabla, k, familia, est)
         if (css) reglas.push(css)
         else limpiarTabla(tabla) // config sin cambios o estructura inesperada: grilla original
       })

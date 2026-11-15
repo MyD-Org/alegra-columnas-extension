@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Alegra: columnas de ítems",
-  "version": "0.2.0",
-  "description": "Personaliza la grilla de productos de presupuestos y remitos de Alegra: columnas con IVA, ocultar y reordenar.",
+  "version": "0.3.0",
+  "description": "Personaliza la grilla de productos de presupuestos, remitos y facturas de Alegra: columnas con IVA, ocultar y reordenar.",
   "permissions": ["storage"],
   "action": {
     "default_title": "Columnas de Alegra",

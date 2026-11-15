@@ -3,10 +3,16 @@
   "use strict"
 
   const $docs = document.getElementById("docs")
+  const $familias = document.getElementById("familias")
   const $columnas = document.getElementById("columnas")
   const $estado = document.getElementById("estado")
 
   let cfg = await CIVA_CONFIG.leer()
+  let familia = "nueva"
+  try {
+    familia = localStorage.getItem("civa-familia") || familia
+  } catch {}
+  if (!CIVA_CONFIG.FAMILIAS[familia]) familia = "nueva"
   let timer = null
 
   async function guardar() {
@@ -16,7 +22,7 @@
     timer = setTimeout(() => ($estado.textContent = ""), 1200)
   }
 
-  function check(texto, marcado, alCambiar, deshabilitado) {
+  function check(marcado, alCambiar, deshabilitado) {
     const input = document.createElement("input")
     input.type = "checkbox"
     input.checked = marcado
@@ -25,13 +31,13 @@
     return input
   }
 
-  function render() {
+  function renderDocs() {
     $docs.replaceChildren(
       ...Object.entries(CIVA_CONFIG.DOCS).map(([clave, doc]) => {
         const label = document.createElement("label")
         label.className = "check"
         label.append(
-          check(doc.titulo, !!cfg.docs[clave], (v) => {
+          check(!!cfg.docs[clave], (v) => {
             cfg.docs[clave] = v
             guardar()
           }),
@@ -40,25 +46,49 @@
         return label
       }),
     )
+  }
 
+  function renderFamilias() {
+    $familias.replaceChildren(
+      ...Object.entries(CIVA_CONFIG.FAMILIAS).map(([clave, f]) => {
+        const b = document.createElement("button")
+        b.type = "button"
+        b.role = "tab"
+        b.textContent = f.titulo
+        b.setAttribute("aria-selected", String(clave === familia))
+        b.addEventListener("click", () => {
+          familia = clave
+          try {
+            localStorage.setItem("civa-familia", clave)
+          } catch {}
+          renderFamilias()
+          renderColumnas()
+        })
+        return b
+      }),
+    )
+  }
+
+  function renderColumnas() {
+    const lista = cfg.columnas[familia]
     $columnas.replaceChildren(
-      ...cfg.columnas.map((col, i) => {
+      ...lista.map((col, i) => {
         const li = document.createElement("li")
         if (!col.visible) li.classList.add("oculta")
-        const obligatoria = CIVA_CONFIG.OBLIGATORIAS.includes(col.id)
+        const obligatoria = CIVA_CONFIG.esObligatoria(familia, col.id)
+        const nombreTxt = CIVA_CONFIG.titulo(familia, col.id)
 
         const label = document.createElement("label")
         const nombre = document.createElement("span")
         nombre.className = "nombre"
-        nombre.textContent = CIVA_CONFIG.titulo(col.id)
+        nombre.textContent = nombreTxt
         label.append(
           check(
-            nombre.textContent,
             col.visible,
             (v) => {
               col.visible = v
               guardar()
-              render()
+              renderColumnas()
             },
             obligatoria,
           ),
@@ -80,13 +110,13 @@
           b.className = "mover"
           b.textContent = simbolo
           b.title = ayuda
-          b.setAttribute("aria-label", `${ayuda}: ${nombre.textContent}`)
+          b.setAttribute("aria-label", `${ayuda}: ${nombreTxt}`)
           const j = i + delta
-          b.disabled = j < 0 || j >= cfg.columnas.length
+          b.disabled = j < 0 || j >= lista.length
           b.addEventListener("click", () => {
-            ;[cfg.columnas[i], cfg.columnas[j]] = [cfg.columnas[j], cfg.columnas[i]]
+            ;[lista[i], lista[j]] = [lista[j], lista[i]]
             guardar()
-            render()
+            renderColumnas()
           })
           return b
         }
@@ -98,10 +128,12 @@
   }
 
   document.getElementById("restablecer").addEventListener("click", () => {
-    cfg = CIVA_CONFIG.normalizar(null)
+    cfg.columnas[familia] = CIVA_CONFIG.normalizar(null).columnas[familia]
     guardar()
-    render()
+    renderColumnas()
   })
 
-  render()
+  renderDocs()
+  renderFamilias()
+  renderColumnas()
 })()
