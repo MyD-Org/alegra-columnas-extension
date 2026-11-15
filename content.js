@@ -305,33 +305,90 @@
 
   // ── Tooltips ─────────────────────────────────────────────────────────────
 
+  // Campos de la grilla cuyo texto no entra (p. ej. el nombre del producto) se marcan con
+  // data-civa-title; al pasar el mouse se muestra un tooltip propio con el texto completo.
+  // Propio y no `title` porque el del navegador tarda ~1 s y ese retardo no se puede cambiar.
   const ATTR_TITULO = "data-civa-title"
+  const RETARDO_TOOLTIP_MS = 150
 
-  /**
-   * Campos de la grilla cuyo texto no entra (p. ej. el nombre del producto): se les pone un
-   * `title` con el texto completo para leerlo al pasar el mouse. Solo tocamos los title que
-   * pusimos nosotros (marcados con data-civa-title).
-   */
   function tooltips(tabla) {
     for (const input of tabla.querySelectorAll("input")) {
       const v = input.value
       const cortado = !!v && input.type !== "checkbox" && input.scrollWidth > input.clientWidth + 1
       if (cortado) {
-        if (input.title !== v) input.title = v
         if (!input.hasAttribute(ATTR_TITULO)) input.setAttribute(ATTR_TITULO, "")
       } else if (input.hasAttribute(ATTR_TITULO)) {
-        input.removeAttribute("title")
         input.removeAttribute(ATTR_TITULO)
       }
     }
   }
 
   function quitarTooltips(raiz) {
-    raiz.querySelectorAll(`[${ATTR_TITULO}]`).forEach((el) => {
-      el.removeAttribute("title")
-      el.removeAttribute(ATTR_TITULO)
-    })
+    raiz.querySelectorAll(`[${ATTR_TITULO}]`).forEach((el) => el.removeAttribute(ATTR_TITULO))
+    ocultarTooltip()
   }
+
+  const burbuja = document.createElement("div")
+  burbuja.className = CLASE_PROPIA
+  burbuja.setAttribute("role", "tooltip")
+  Object.assign(burbuja.style, {
+    position: "fixed",
+    zIndex: "2147483647",
+    maxWidth: "480px",
+    padding: "6px 10px",
+    borderRadius: "6px",
+    background: "#1e293b",
+    color: "#fff",
+    font: "500 13px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif",
+    boxShadow: "0 4px 12px rgb(0 0 0 / .18)",
+    pointerEvents: "none",
+    whiteSpace: "normal",
+    overflowWrap: "anywhere",
+  })
+  let timerTooltip = null
+  let inputActual = null
+
+  /** el input marcado bajo el puntero: el propio input o el envoltorio del select que lo contiene */
+  function inputBajo(target) {
+    if (!(target instanceof Element)) return null
+    const directo = target.closest(`[${ATTR_TITULO}]`)
+    if (directo) return directo
+    for (const input of document.querySelectorAll(`input[${ATTR_TITULO}]`)) {
+      if (input.parentElement && input.parentElement.contains(target)) return input
+    }
+    return null
+  }
+
+  function mostrarTooltip(input) {
+    burbuja.textContent = input.value
+    if (!burbuja.isConnected) document.body.appendChild(burbuja)
+    const r = input.getBoundingClientRect()
+    const b = burbuja.getBoundingClientRect()
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - b.width - 8))
+    const arriba = r.top - b.height - 6
+    burbuja.style.left = left + "px"
+    burbuja.style.top = (arriba >= 8 ? arriba : r.bottom + 6) + "px"
+  }
+
+  function ocultarTooltip() {
+    clearTimeout(timerTooltip)
+    inputActual = null
+    if (burbuja.isConnected) burbuja.remove()
+  }
+
+  document.addEventListener(
+    "mouseover",
+    (e) => {
+      const input = inputBajo(e.target)
+      if (input === inputActual) return
+      ocultarTooltip()
+      if (!input || !input.value) return
+      inputActual = input
+      timerTooltip = setTimeout(() => mostrarTooltip(input), RETARDO_TOOLTIP_MS)
+    },
+    true,
+  )
+  for (const ev of ["mousedown", "keydown", "scroll", "blur"]) window.addEventListener(ev, ocultarTooltip, true)
 
   // ── Sincronización ───────────────────────────────────────────────────────
 
