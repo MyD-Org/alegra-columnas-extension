@@ -1,42 +1,59 @@
 // Alegra: columnas de la grilla de ítems — content script.
 //
-// En presupuestos y remitos de Alegra permite:
-//   - sumar columnas calculadas (Subtotal c/IVA, Precio c/IVA);
+// En presupuestos, remitos y facturas de venta de Alegra permite:
+//   - sumar columnas calculadas (Subtotal/Total c/IVA, Precio c/IVA);
 //   - ocultar columnas de Alegra;
 //   - cambiar el orden de las columnas.
 // Solo LEE la pantalla: no toca inputs ni envía nada. La config viene del popup (config.js).
 //
-// La grilla es Vue: un único contenedor `.dui-items-group-table__table` con display:grid y
-// todas las celdas planas (header + N celdas por fila). Para no pelearnos con Vue:
-//   - NUNCA movemos ni borramos nodos de Vue; solo les ponemos atributos data-civa-c (columna)
-//     y data-civa-r (fila), y una hoja de estilo propia ubica cada celda con grid-column /
-//     grid-row explícitos (!important). Así el orden visual cambia sin tocar el DOM de Vue.
+// Alegra tiene dos grillas distintas (ver FAMILIAS en config.js):
+//   - "nueva" (presupuestos, remitos): un único `.dui-items-group-table__table` con
+//     display:grid y todas las celdas planas (header + N celdas por fila);
+//   - "factura" (facturas de venta): una <table> en `.items-table` con un <tr> por línea.
+// Las dos se llevan al mismo modelo (encabezados + filas de N celdas) y se ubican igual:
+//   - NUNCA movemos ni borramos nodos de Alegra; solo les ponemos atributos data-civa-c
+//     (columna) y data-civa-r (fila), y una hoja de estilo propia ubica cada celda con
+//     grid-column / grid-row explícitos (!important). La <table> de facturas se convierte en
+//     grid con sus <tr> en display:contents, solo mientras haya algo personalizado.
 //   - Las celdas calculadas son nodos nuestros, agregados como hermanos.
-// Si la estructura no es la esperada, la tabla queda exactamente como la dibuja Alegra.
+// Si la estructura no es la esperada, la grilla queda exactamente como la dibuja Alegra.
 // Limitación conocida: el orden de Tab sigue el orden original de Alegra.
 
 /* global CIVA_CONFIG */
 ;(() => {
   "use strict"
 
-  const TABLA = ".dui-items-group-table__table"
+  const SEL_NUEVA = ".dui-items-group-table__table"
+  const SEL_FACTURA = ".items-table table"
   const ATTR_TABLA = "data-civa"
   const ATTR_COL = "data-civa-c"
   const ATTR_FILA = "data-civa-r"
   const CLASE_PROPIA = "civa-propia"
+  const STYLE_ID = "civa-style"
+
+  // Si la extensión se recargó con la página abierta, quedan restos de la instancia anterior.
+  document.querySelectorAll(`#${STYLE_ID}, .${CLASE_PROPIA}, .civa-cell, .civa-header`).forEach((el) => el.remove())
+  document.querySelectorAll("[data-civa-title]").forEach((el) => {
+    el.removeAttribute("title")
+    el.removeAttribute("data-civa-title")
+  })
+  document.querySelectorAll(`[${ATTR_TABLA}], [${ATTR_COL}], [${ATTR_FILA}]`).forEach((el) => {
+    el.removeAttribute(ATTR_TABLA)
+    el.removeAttribute(ATTR_COL)
+    el.removeAttribute(ATTR_FILA)
+  })
 
   const style = document.createElement("style")
-  style.id = "civa-style"
+  style.id = STYLE_ID
 
   let cfg = null
 
   /** ancla nativa → Map(idExtra → nodo nuestro) */
   const propiasDe = new WeakMap()
+  /** <table> de facturas → anchos medidos en su diseño original, por etiqueta */
+  const anchosDe = new WeakMap()
 
   const esPropia = (el) => el.classList.contains(CLASE_PROPIA)
-  const esHeader = (el) =>
-    el.classList.contains("dui-items-table-header-cell") || el.classList.contains("dui-items-group-table__drag-header")
-  const esInicioFila = (el) => el.classList.contains("dui-items-group-table__drag-cell")
 
   // ── Números ──────────────────────────────────────────────────────────────
 
@@ -70,10 +87,13 @@
     return (valor < 0 ? "-" : "") + (prefijo || "$") + txt
   }
 
-  /** "IVA - (21.00%)" → 21 ; "Ninguno" / "" → 0 ; texto sin % (p. ej. "2 impuestos") → null */
-  function tasaImpuesto(texto) {
+  /**
+   * "IVA - (21.00%)" → 21 ; "Ninguno" / "" / el placeholder (= título de la columna) → 0 ;
+   * texto sin % (p. ej. "2 impuestos") → null
+   */
+  function tasaImpuesto(texto, placeholder) {
     const t = (texto || "").trim()
-    if (!t || /^ningun/i.test(t)) return 0
+    if (!t || /^ningun/i.test(t) || t === placeholder) return 0
     const tasas = [...t.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map((m) => Number(m[1].replace(",", ".")))
     if (!tasas.length) return null
     return tasas.reduce((a, b) => a + b, 0)
@@ -89,19 +109,26 @@
 
   /** Valor de una columna calculada para una fila: { texto, ayuda } */
   function calcular(id, fila, idx) {
-    const sub = parseMonto(textoCelda(fila[idx.sub]))
-    const tasa = idx.imp >= 0 ? tasaImpuesto(textoCelda(fila[idx.imp])) : null
+    if (idx.importe < 0) return { texto: "—", ayuda: "No se encontró la columna del importe" }
+    const importe = parseMonto(textoCelda(fila[idx.importe]))
+    const tasa = idx.impuesto >= 0 ? tasaImpuesto(textoCelda(fila[idx.impuesto]), idx.etiquetaImpuesto) : null
     if (tasa == null) return { texto: "—", ayuda: "No se pudo leer la tasa del impuesto de la línea" }
-    const decimal = (sub && sub.decimal) || "."
-    const prefijo = (sub && sub.prefijo) || "$"
+    const decimal = (importe && importe.decimal) || "."
+    const prefijo = (importe && importe.prefijo) || "$"
     if (id === "x:subtotalIva") {
-      if (!sub) return { texto: "—", ayuda: "No se pudo leer el subtotal de la línea" }
-      return { texto: formatMonto(redondear(sub.valor * (1 + tasa / 100)), decimal, prefijo), ayuda: `Subtotal + ${tasa}%` }
+      if (!importe) return { texto: "—", ayuda: "No se pudo leer el importe de la línea" }
+      return {
+        texto: formatMonto(redondear(importe.valor * (1 + tasa / 100)), decimal, prefijo),
+        ayuda: `Importe + ${tasa}%`,
+      }
     }
     if (id === "x:precioIva") {
       const precio = idx.precio >= 0 ? parseMonto(textoCelda(fila[idx.precio])) : null
       if (!precio) return { texto: formatMonto(0, decimal, prefijo), ayuda: "Línea sin precio" }
-      return { texto: formatMonto(redondear(precio.valor * (1 + tasa / 100)), decimal, prefijo), ayuda: `Precio + ${tasa}%` }
+      return {
+        texto: formatMonto(redondear(precio.valor * (1 + tasa / 100)), decimal, prefijo),
+        ayuda: `Precio + ${tasa}%`,
+      }
     }
     return { texto: "", ayuda: "" }
   }
@@ -127,6 +154,103 @@
 
   const pct = (t) => (/^[\d.]+%$/.test(t) ? Number(t.slice(0, -1)) : null)
 
+  // ── Lectura de cada grilla al modelo común ───────────────────────────────
+  //
+  // Modelo: { headers: [celdas], filas: [[celdas]], sueltos: [elementos], etiquetas: [textos],
+  //           tracks(final) → grid-template-columns, css(T) → reglas extra }
+
+  function leerNueva(tabla) {
+    const esHeader = (el) =>
+      el.classList.contains("dui-items-table-header-cell") || el.classList.contains("dui-items-group-table__drag-header")
+    const esInicioFila = (el) => el.classList.contains("dui-items-group-table__drag-cell")
+
+    const nativos = [...tabla.children].filter((el) => !esPropia(el))
+    const headers = []
+    for (const el of nativos) {
+      if (!esHeader(el)) break
+      headers.push(el)
+    }
+    const n = headers.length
+    const cols = tokens(tabla.style.gridTemplateColumns)
+    if (n === 0 || cols.length !== n) return null
+
+    // filas: grupos de n celdas que empiezan con la celda de arrastre; el resto (botón
+    // «Agregar línea», etc.) va a filas propias de ancho completo
+    const filas = []
+    const sueltos = []
+    for (let i = n; i < nativos.length; ) {
+      if (esInicioFila(nativos[i]) && i + n <= nativos.length) {
+        const fila = nativos.slice(i, i + n)
+        if (fila.slice(1).some(esInicioFila)) return null // fila incompleta: estructura desconocida
+        filas.push(fila)
+        i += n
+      } else sueltos.push(nativos[i++])
+    }
+
+    return {
+      headers,
+      filas,
+      sueltos,
+      etiquetas: headers.map((h) => h.textContent.trim()),
+      // las columnas en % se reescalan para ocupar el mismo % total que antes
+      tracks(final) {
+        const pctOriginal = cols.reduce((a, t) => a + (pct(t) ?? 0), 0)
+        const ts = final.map((f) => (f.x ? CIVA_CONFIG.EXTRAS[f.x].ancho + "%" : cols[f.nat]))
+        const pctNuevo = ts.reduce((a, t) => a + (pct(t) ?? 0), 0)
+        const factor = pctNuevo > 0 && pctOriginal > 0 ? pctOriginal / pctNuevo : 1
+        return ts.map((t) => (pct(t) == null ? t : (pct(t) * factor).toFixed(2) + "%")).join(" ")
+      },
+      css: () => [],
+    }
+  }
+
+  function leerFactura(tabla) {
+    const trs = [...tabla.rows]
+    if (!trs.length || !trs[0].classList.contains("header")) return null
+    const celdas = (tr) => [...tr.cells].filter((c) => !esPropia(c))
+    const headers = celdas(trs[0])
+    const n = headers.length
+    const etiquetas = headers.map((h) => h.textContent.trim())
+    const filas = trs.slice(1).map(celdas)
+    if (!n || filas.some((f) => f.length !== n)) return null
+
+    // anchos para el modo grilla: se miden mientras la tabla se dibuja como tabla
+    let anchos = anchosDe.get(tabla)
+    if (getComputedStyle(tabla).display !== "grid" || !anchos) {
+      // las columnas ocultas por nosotros miden 0: conservan el ancho medido antes
+      const medidos = headers.map((h, i) => h.getBoundingClientRect().width || (anchos && anchos.get(i)) || 0)
+      if (!medidos.some((w) => w > 0)) return null // tabla oculta: no hay con qué medir
+      const promedio = medidos.reduce((a, b) => a + b, 0) / medidos.filter((w) => w > 0).length
+      anchos = new Map(medidos.map((w, i) => [i, w > 0 ? w : promedio]))
+      anchosDe.set(tabla, anchos)
+    }
+    const total = [...anchos.values()].reduce((a, b) => a + b, 0)
+
+    return {
+      headers,
+      filas,
+      sueltos: [],
+      etiquetas,
+      // Sin reordenar, la <table> queda como tabla (el navegador reparte los anchos y los
+      // inputs de Alegra entran); solo al reordenar pasa a grilla con estos anchos.
+      soloGrillaAlReordenar: true,
+      tracks(final) {
+        return final
+          .map((f) => {
+            const w = f.x ? (total * CIVA_CONFIG.EXTRAS[f.x].ancho) / 100 : anchos.get(f.nat)
+            return `minmax(0,${w.toFixed(1)}fr)`
+          })
+          .join(" ")
+      },
+      css: (T) => [
+        `${T}{display:grid !important}`,
+        `${T}>thead,${T}>tbody,${T}>tfoot,${T} tr{display:contents !important}`,
+        `${T} [${ATTR_FILA}]{min-width:0;overflow:hidden}`,
+        `${T} [${ATTR_FILA}] :is(input,select,textarea){max-width:100%;box-sizing:border-box}`,
+      ],
+    }
+  }
+
   // ── Nodos propios ────────────────────────────────────────────────────────
 
   /** copia class y los data-v-* (estilos scoped de Vue) del ancla, sin data-test ni keys de drag */
@@ -136,21 +260,31 @@
     }
   }
 
-  function propia(ancla, id, esCabecera, modeloP) {
+  function propia(ancla, id, familia, esCabecera, modelo) {
     let mapa = propiasDe.get(ancla)
     if (!mapa) propiasDe.set(ancla, (mapa = new Map()))
     let el = mapa.get(id)
     if (!el) {
-      el = document.createElement("div")
-      clonarAtributos(ancla, el)
+      // En la tabla de facturas la celda es td/th como su ancla y copia el estilo de la celda
+      // «Total» (su clase): queda después de la nativa, así que una búsqueda por clase en la fila
+      // sigue encontrando primero la de Alegra.
+      const esTabla = /^T[DH]$/.test(ancla.tagName)
+      el = document.createElement(esTabla ? ancla.tagName.toLowerCase() : "div")
+      clonarAtributos(modelo || ancla, el)
       el.classList.add(CLASE_PROPIA)
       if (esCabecera) {
-        el.classList.add("justify-end")
-        el.textContent = CIVA_CONFIG.titulo(id)
+        if (!esTabla) {
+          el.classList.add("justify-end")
+          el.style.textAlign = "right"
+        }
+        el.textContent = CIVA_CONFIG.titulo(familia, id)
         el.title = CIVA_CONFIG.EXTRAS[id].ayuda + " (agregado por la extensión)"
+      } else if (esTabla) {
+        el.style.fontWeight = "600"
       } else {
         const p = document.createElement("p")
-        p.className = (modeloP && modeloP.className) || "text-right text-sm leading-8 mt-1"
+        const pModelo = modelo && modelo.querySelector("p")
+        p.className = (pModelo && pModelo.className) || "text-right text-sm leading-8 mt-1"
         p.style.fontWeight = "600"
         el.appendChild(p)
       }
@@ -169,54 +303,121 @@
     if (el.getAttribute(nombre) !== valor) el.setAttribute(nombre, valor)
   }
 
+  // ── Tooltips ─────────────────────────────────────────────────────────────
+
+  // Campos de la grilla cuyo texto no entra (p. ej. el nombre del producto) se marcan con
+  // data-civa-title; al pasar el mouse se muestra un tooltip propio con el texto completo.
+  // Propio y no `title` porque el del navegador tarda ~1 s y ese retardo no se puede cambiar.
+  const ATTR_TITULO = "data-civa-title"
+  const RETARDO_TOOLTIP_MS = 150
+
+  function tooltips(tabla) {
+    for (const input of tabla.querySelectorAll("input")) {
+      const v = input.value
+      const cortado = !!v && input.type !== "checkbox" && input.scrollWidth > input.clientWidth + 1
+      if (cortado) {
+        if (!input.hasAttribute(ATTR_TITULO)) input.setAttribute(ATTR_TITULO, "")
+      } else if (input.hasAttribute(ATTR_TITULO)) {
+        input.removeAttribute(ATTR_TITULO)
+      }
+    }
+  }
+
+  function quitarTooltips(raiz) {
+    raiz.querySelectorAll(`[${ATTR_TITULO}]`).forEach((el) => el.removeAttribute(ATTR_TITULO))
+    ocultarTooltip()
+  }
+
+  const burbuja = document.createElement("div")
+  burbuja.className = CLASE_PROPIA
+  burbuja.setAttribute("role", "tooltip")
+  Object.assign(burbuja.style, {
+    position: "fixed",
+    zIndex: "2147483647",
+    maxWidth: "480px",
+    padding: "6px 10px",
+    borderRadius: "6px",
+    background: "#1e293b",
+    color: "#fff",
+    font: "500 13px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif",
+    boxShadow: "0 4px 12px rgb(0 0 0 / .18)",
+    pointerEvents: "none",
+    whiteSpace: "normal",
+    overflowWrap: "anywhere",
+  })
+  let timerTooltip = null
+  let inputActual = null
+
+  /** el input marcado bajo el puntero: el propio input o el envoltorio del select que lo contiene */
+  function inputBajo(target) {
+    if (!(target instanceof Element)) return null
+    const directo = target.closest(`[${ATTR_TITULO}]`)
+    if (directo) return directo
+    for (const input of document.querySelectorAll(`input[${ATTR_TITULO}]`)) {
+      if (input.parentElement && input.parentElement.contains(target)) return input
+    }
+    return null
+  }
+
+  function mostrarTooltip(input) {
+    burbuja.textContent = input.value
+    if (!burbuja.isConnected) document.body.appendChild(burbuja)
+    const r = input.getBoundingClientRect()
+    const b = burbuja.getBoundingClientRect()
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - b.width - 8))
+    const arriba = r.top - b.height - 6
+    burbuja.style.left = left + "px"
+    burbuja.style.top = (arriba >= 8 ? arriba : r.bottom + 6) + "px"
+  }
+
+  function ocultarTooltip() {
+    clearTimeout(timerTooltip)
+    inputActual = null
+    if (burbuja.isConnected) burbuja.remove()
+  }
+
+  document.addEventListener(
+    "mouseover",
+    (e) => {
+      const input = inputBajo(e.target)
+      if (input === inputActual) return
+      ocultarTooltip()
+      if (!input || !input.value) return
+      inputActual = input
+      timerTooltip = setTimeout(() => mostrarTooltip(input), RETARDO_TOOLTIP_MS)
+    },
+    true,
+  )
+  for (const ev of ["mousedown", "keydown", "scroll", "blur"]) window.addEventListener(ev, ocultarTooltip, true)
+
   // ── Sincronización ───────────────────────────────────────────────────────
 
   function limpiarTabla(tabla) {
-    for (const el of [...tabla.children]) {
-      if (esPropia(el)) el.remove()
-      else {
-        el.removeAttribute(ATTR_COL)
-        el.removeAttribute(ATTR_FILA)
-      }
-    }
+    tabla.querySelectorAll(`.${CLASE_PROPIA}`).forEach((el) => el.remove())
+    tabla.querySelectorAll(`[${ATTR_COL}], [${ATTR_FILA}]`).forEach((el) => {
+      el.removeAttribute(ATTR_COL)
+      el.removeAttribute(ATTR_FILA)
+    })
     tabla.removeAttribute(ATTR_TABLA)
   }
 
   function limpiar() {
     document.querySelectorAll(`[${ATTR_TABLA}]`).forEach(limpiarTabla)
     document.querySelectorAll(`.${CLASE_PROPIA}`).forEach((el) => el.remove())
+    quitarTooltips(document)
     if (style.isConnected) style.remove()
   }
 
-  /** Arma la grilla de una tabla según la config. Devuelve el CSS o null (tabla sin tocar). */
-  function sincronizarTabla(tabla, nTabla) {
-    const nativos = [...tabla.children].filter((el) => !esPropia(el))
-    const headers = []
-    for (const el of nativos) {
-      if (!esHeader(el)) break
-      headers.push(el)
-    }
+  /** Arma una grilla según la config. Devuelve el CSS o null (grilla sin tocar). */
+  function sincronizarTabla(tabla, nTabla, familia, est) {
+    const { headers, filas, sueltos, etiquetas } = est
     const n = headers.length
-    const cols = tokens(tabla.style.gridTemplateColumns)
-    if (n === 0 || cols.length !== n) return null
-    const etiquetas = headers.map((h) => h.textContent.trim())
+    const base = CIVA_CONFIG.FAMILIAS[familia].base
     const idx = {
-      sub: etiquetas.indexOf("Subtotal"),
-      imp: etiquetas.indexOf("Impuesto"),
-      precio: etiquetas.indexOf("Precio"),
-    }
-
-    // filas: grupos de n celdas que empiezan con la celda de arrastre; el resto (botón
-    // «Agregar línea», etc.) va a filas propias de ancho completo
-    const filas = []
-    const sueltos = []
-    for (let i = n; i < nativos.length; ) {
-      if (esInicioFila(nativos[i]) && i + n <= nativos.length) {
-        const fila = nativos.slice(i, i + n)
-        if (fila.slice(1).some(esInicioFila)) return null // fila incompleta: estructura desconocida
-        filas.push(fila)
-        i += n
-      } else sueltos.push(nativos[i++])
+      importe: etiquetas.indexOf(base.importe),
+      impuesto: etiquetas.indexOf(base.impuesto),
+      precio: etiquetas.indexOf(base.precio),
+      etiquetaImpuesto: base.impuesto,
     }
 
     // columnas fijas de Alegra: sin título a la izquierda (arrastre, checkbox) y a la derecha (menú)
@@ -229,7 +430,7 @@
     const final = []
     for (let i = 0; i < izq; i++) final.push({ nat: i })
     const usadas = new Set()
-    for (const c of cfg.columnas) {
+    for (const c of cfg.columnas[familia]) {
       if (c.id.startsWith("x:")) {
         if (c.visible && CIVA_CONFIG.EXTRAS[c.id]) final.push({ x: c.id })
         continue
@@ -242,18 +443,14 @@
     for (let i = izq; i < der; i++) if (!usadas.has(i)) final.push({ nat: i })
     for (let i = der; i < n; i++) final.push({ nat: i })
 
-    const sinCambios = final.length === n && final.every((f, k) => f.nat === k)
-    if (sinCambios) return null
+    if (final.length === n && final.every((f, k) => f.nat === k)) return null // sin cambios
 
-    // anchos: las columnas en % se reescalan para ocupar el mismo % total que antes
-    const pctOriginal = cols.reduce((a, t) => a + (pct(t) ?? 0), 0)
-    const tracks = final.map((f) => (f.x ? CIVA_CONFIG.EXTRAS[f.x].ancho + "%" : cols[f.nat]))
-    const pctNuevo = tracks.reduce((a, t) => a + (pct(t) ?? 0), 0)
-    const factor = pctNuevo > 0 && pctOriginal > 0 ? pctOriginal / pctNuevo : 1
-    const template = tracks.map((t) => (pct(t) == null ? t : (pct(t) * factor).toFixed(2) + "%")).join(" ")
+    // ¿cambió el orden relativo de las nativas visibles? (agregar u ocultar columnas no cuenta)
+    const nats = final.filter((f) => f.nat !== undefined).map((f) => f.nat)
+    const reordenado = nats.some((v, k) => k > 0 && v < nats[k - 1])
+    const modoGrilla = !est.soloGrillaAlReordenar || reordenado
 
     const posNat = new Map(final.map((f, k) => [f.nat, k + 1]).filter(([i]) => i !== undefined))
-    const extras = final.map((f, k) => [f.x, k + 1]).filter(([x]) => x)
     const deseadas = new Set()
 
     const ubicarGrupo = (grupo, fila, esCabecera) => {
@@ -261,19 +458,31 @@
         setAttr(el, ATTR_COL, String(posNat.get(i) || 0))
         setAttr(el, ATTR_FILA, String(fila))
       })
-      let previo = grupo[n - 1]
-      for (const [id, pos] of extras) {
-        const el = propia(grupo[n - 1], id, esCabecera, idx.sub >= 0 ? grupo[idx.sub].querySelector("p") : null)
-        if (previo.nextElementSibling !== el) previo.after(el)
+      const modelo = idx.importe >= 0 ? grupo[idx.importe] : null
+      // Cada calculada va en el DOM justo después de lo que la precede en el orden final: en modo
+      // tabla esa es su posición real; en modo grilla da igual (manda grid-column).
+      let previo = null
+      final.forEach((f, k) => {
+        if (f.nat !== undefined) {
+          previo = grupo[f.nat]
+          return
+        }
+        const id = f.x
+        const pos = k + 1
+        const el = propia(grupo[n - 1], id, familia, esCabecera, modelo)
+        if (previo ? previo.nextElementSibling !== el : grupo[0].previousElementSibling !== el) {
+          if (previo) previo.after(el)
+          else grupo[0].before(el)
+        }
         previo = el
         setAttr(el, ATTR_COL, String(pos))
         setAttr(el, ATTR_FILA, String(fila))
         deseadas.add(el)
         if (!esCabecera) {
-          const { texto, ayuda } = idx.sub >= 0 ? calcular(id, grupo, idx) : { texto: "—", ayuda: "Sin columna Subtotal" }
+          const { texto, ayuda } = calcular(id, grupo, idx)
           setTexto(el, texto, ayuda)
         }
-      }
+      })
     }
 
     ubicarGrupo(headers, 1, true)
@@ -282,18 +491,24 @@
       setAttr(el, ATTR_COL, "full")
       setAttr(el, ATTR_FILA, String(filas.length + 2 + k))
     })
-    for (const el of [...tabla.children]) if (esPropia(el) && !deseadas.has(el)) el.remove()
+    tabla.querySelectorAll(`.${CLASE_PROPIA}`).forEach((el) => {
+      if (!deseadas.has(el)) el.remove()
+    })
 
     setAttr(tabla, ATTR_TABLA, String(nTabla))
-    const T = `${TABLA}[${ATTR_TABLA}="${nTabla}"]`
+    const T = `[${ATTR_TABLA}="${nTabla}"]`
+    const ocultas = `${T} [${ATTR_COL}="0"]{display:none !important}`
+    if (!modoGrilla) return ocultas
+
     const reglas = [
-      `${T}{grid-template-columns:${template} !important;grid-auto-flow:row !important}`,
-      `${T}>[${ATTR_COL}="0"]{display:none !important}`,
-      `${T}>[${ATTR_COL}="full"]{grid-column:1 / -1 !important}`,
+      ...est.css(T),
+      `${T}{grid-template-columns:${est.tracks(final)} !important;grid-auto-flow:row !important}`,
+      ocultas,
+      `${T} [${ATTR_COL}="full"]{grid-column:1 / -1 !important}`,
     ]
-    for (let k = 1; k <= final.length; k++) reglas.push(`${T}>[${ATTR_COL}="${k}"]{grid-column:${k} !important}`)
+    for (let k = 1; k <= final.length; k++) reglas.push(`${T} [${ATTR_COL}="${k}"]{grid-column:${k} !important}`)
     const totalFilas = filas.length + 1 + sueltos.length
-    for (let r = 1; r <= totalFilas; r++) reglas.push(`${T}>[${ATTR_FILA}="${r}"]{grid-row:${r} !important}`)
+    for (let r = 1; r <= totalFilas; r++) reglas.push(`${T} [${ATTR_FILA}="${r}"]{grid-row:${r} !important}`)
     return reglas.join("\n")
   }
 
@@ -311,11 +526,16 @@
     try {
       const doc = docActual()
       if (!doc || !cfg.docs[doc]) return limpiar()
+      const familia = CIVA_CONFIG.DOCS[doc].familia
+      const selector = familia === "factura" ? SEL_FACTURA : SEL_NUEVA
+      const leer = familia === "factura" ? leerFactura : leerNueva
       const reglas = []
-      document.querySelectorAll(TABLA).forEach((tabla, k) => {
-        const css = sincronizarTabla(tabla, k)
+      document.querySelectorAll(selector).forEach((tabla, k) => {
+        const est = leer(tabla)
+        const css = est && sincronizarTabla(tabla, k, familia, est)
         if (css) reglas.push(css)
         else limpiarTabla(tabla) // config sin cambios o estructura inesperada: grilla original
+        tooltips(tabla)
       })
       const css = reglas.join("\n")
       if (style.textContent !== css) style.textContent = css

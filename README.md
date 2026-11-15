@@ -1,19 +1,19 @@
 # Extensión de Chrome: Alegra columnas de ítems
 
-Personaliza la grilla de productos al crear o editar **presupuestos** y **remitos** en Alegra:
+Personaliza la grilla de productos al crear o editar **presupuestos**, **remitos** y **facturas de venta** en Alegra:
 
-- Columnas calculadas: **Subtotal c/IVA** (subtotal de la línea con descuento, más impuestos)
-  y **Precio c/IVA** (precio unitario más impuestos, sin descuento).
+- Columnas calculadas: **Subtotal c/IVA** (en facturas, **Total c/IVA**: importe de la línea con
+  descuento, más impuestos) y **Precio c/IVA** (precio unitario más impuestos, sin descuento).
 - Ocultar columnas de Alegra (salvo «Producto o servicios»).
 - Cambiar el orden de las columnas.
-- Elegir en qué pantallas se aplica (Presupuestos, Remitos).
+- Tooltip con el texto completo al pasar el mouse por un campo cortado (p. ej. el nombre del producto).
+- Elegir en qué pantallas se aplica (Presupuestos, Remitos, Facturas de venta).
+- Columnas configurables por separado para «Presupuestos y remitos» y para «Facturas de venta»,
+  porque Alegra usa dos grillas distintas.
 
 Es solo visual: no modifica el documento ni envía datos. La configuración se guarda en
 `chrome.storage.sync` (viaja con la cuenta de Chrome) y se aplica al instante en las pestañas
 abiertas.
-
-**Facturas de venta** no está soportada: Alegra usa ahí otra pantalla (tabla HTML vieja con su
-propio «Personalizar opciones»).
 
 ## Instalación (cada Chrome del equipo)
 
@@ -35,7 +35,10 @@ Chrome (fíjela con el ícono de pieza de rompecabezas).
 
 ## Cómo funciona
 
-- La grilla de Alegra es un único `display: grid` (Vue) con todas las celdas planas.
+- Presupuestos y remitos: la grilla es un único `display: grid` (Vue) con todas las celdas planas.
+- Facturas de venta: es una `<table>` con un `<tr>` por línea. Mientras haya algo personalizado,
+  la tabla pasa a `display: grid` con sus `<tr>` en `display: contents`, y los anchos salen de
+  medir las columnas en el diseño original.
 - La extensión **nunca mueve ni borra nodos de Alegra**: marca cada celda con
   `data-civa-c` (columna) y `data-civa-r` (fila) y una hoja de estilo propia las ubica con
   `grid-column` / `grid-row` explícitos (`!important`). Las ocultas van con `display: none`.
