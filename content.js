@@ -210,12 +210,14 @@
     const filas = trs.slice(1).map(celdas)
     if (!n || filas.some((f) => f.length !== n)) return null
 
-    // anchos del diseño original de Alegra: se miden mientras la tabla no está intervenida
+    // anchos para el modo grilla: se miden mientras la tabla se dibuja como tabla
     let anchos = anchosDe.get(tabla)
-    if (!tabla.hasAttribute(ATTR_TABLA) || !anchos) {
-      const medidos = headers.map((h) => h.getBoundingClientRect().width)
-      if (medidos.some((w) => !(w > 0))) return null // tabla oculta: no hay con qué medir
-      anchos = new Map(etiquetas.map((e, i) => [i, medidos[i]]))
+    if (getComputedStyle(tabla).display !== "grid" || !anchos) {
+      // las columnas ocultas por nosotros miden 0: conservan el ancho medido antes
+      const medidos = headers.map((h, i) => h.getBoundingClientRect().width || (anchos && anchos.get(i)) || 0)
+      if (!medidos.some((w) => w > 0)) return null // tabla oculta: no hay con qué medir
+      const promedio = medidos.reduce((a, b) => a + b, 0) / medidos.filter((w) => w > 0).length
+      anchos = new Map(medidos.map((w, i) => [i, w > 0 ? w : promedio]))
       anchosDe.set(tabla, anchos)
     }
     const total = [...anchos.values()].reduce((a, b) => a + b, 0)
@@ -225,6 +227,9 @@
       filas,
       sueltos: [],
       etiquetas,
+      // Sin reordenar, la <table> queda como tabla (el navegador reparte los anchos y los
+      // inputs de Alegra entran); solo al reordenar pasa a grilla con estos anchos.
+      soloGrillaAlReordenar: true,
       tracks(final) {
         return final
           .map((f) => {
@@ -236,7 +241,8 @@
       css: (T) => [
         `${T}{display:grid !important}`,
         `${T}>thead,${T}>tbody,${T}>tfoot,${T} tr{display:contents !important}`,
-        `${T} [${ATTR_FILA}]{display:flex;flex-direction:column;justify-content:center;min-width:0}`,
+        `${T} [${ATTR_FILA}]{min-width:0;overflow:hidden}`,
+        `${T} [${ATTR_FILA}] :is(input,select,textarea){max-width:100%;box-sizing:border-box}`,
       ],
     }
   }
@@ -255,25 +261,27 @@
     if (!mapa) propiasDe.set(ancla, (mapa = new Map()))
     let el = mapa.get(id)
     if (!el) {
-      // En la tabla de facturas la celda tiene que ser td/th como su ancla, y SIN las clases de
-      // Alegra (`total`, `price`…): su código podría buscar celdas por esas clases.
+      // En la tabla de facturas la celda es td/th como su ancla y copia el estilo de la celda
+      // «Total» (su clase): queda después de la nativa, así que una búsqueda por clase en la fila
+      // sigue encontrando primero la de Alegra.
       const esTabla = /^T[DH]$/.test(ancla.tagName)
       el = document.createElement(esTabla ? ancla.tagName.toLowerCase() : "div")
-      if (esTabla) el.style.padding = "0 8px"
-      else clonarAtributos(modelo || ancla, el)
+      clonarAtributos(modelo || ancla, el)
       el.classList.add(CLASE_PROPIA)
       if (esCabecera) {
-        el.classList.add("justify-end")
-        el.style.textAlign = "right"
+        if (!esTabla) {
+          el.classList.add("justify-end")
+          el.style.textAlign = "right"
+        }
         el.textContent = CIVA_CONFIG.titulo(familia, id)
         el.title = CIVA_CONFIG.EXTRAS[id].ayuda + " (agregado por la extensión)"
+      } else if (esTabla) {
+        el.style.fontWeight = "600"
       } else {
         const p = document.createElement("p")
-        const pModelo = !esTabla && modelo && modelo.querySelector("p")
+        const pModelo = modelo && modelo.querySelector("p")
         p.className = (pModelo && pModelo.className) || "text-right text-sm leading-8 mt-1"
         p.style.fontWeight = "600"
-        p.style.textAlign = "right"
-        p.style.margin = pModelo ? "" : "0"
         el.appendChild(p)
       }
       mapa.set(id, el)
@@ -345,9 +353,12 @@
 
     if (final.length === n && final.every((f, k) => f.nat === k)) return null // sin cambios
 
-    const template = est.tracks(final)
+    // ¿cambió el orden relativo de las nativas visibles? (agregar u ocultar columnas no cuenta)
+    const nats = final.filter((f) => f.nat !== undefined).map((f) => f.nat)
+    const reordenado = nats.some((v, k) => k > 0 && v < nats[k - 1])
+    const modoGrilla = !est.soloGrillaAlReordenar || reordenado
+
     const posNat = new Map(final.map((f, k) => [f.nat, k + 1]).filter(([i]) => i !== undefined))
-    const extras = final.map((f, k) => [f.x, k + 1]).filter(([x]) => x)
     const deseadas = new Set()
 
     const ubicarGrupo = (grupo, fila, esCabecera) => {
@@ -356,10 +367,21 @@
         setAttr(el, ATTR_FILA, String(fila))
       })
       const modelo = idx.importe >= 0 ? grupo[idx.importe] : null
-      let previo = grupo[n - 1]
-      for (const [id, pos] of extras) {
+      // Cada calculada va en el DOM justo después de lo que la precede en el orden final: en modo
+      // tabla esa es su posición real; en modo grilla da igual (manda grid-column).
+      let previo = null
+      final.forEach((f, k) => {
+        if (f.nat !== undefined) {
+          previo = grupo[f.nat]
+          return
+        }
+        const id = f.x
+        const pos = k + 1
         const el = propia(grupo[n - 1], id, familia, esCabecera, modelo)
-        if (previo.nextElementSibling !== el) previo.after(el)
+        if (previo ? previo.nextElementSibling !== el : grupo[0].previousElementSibling !== el) {
+          if (previo) previo.after(el)
+          else grupo[0].before(el)
+        }
         previo = el
         setAttr(el, ATTR_COL, String(pos))
         setAttr(el, ATTR_FILA, String(fila))
@@ -368,7 +390,7 @@
           const { texto, ayuda } = calcular(id, grupo, idx)
           setTexto(el, texto, ayuda)
         }
-      }
+      })
     }
 
     ubicarGrupo(headers, 1, true)
@@ -383,10 +405,13 @@
 
     setAttr(tabla, ATTR_TABLA, String(nTabla))
     const T = `[${ATTR_TABLA}="${nTabla}"]`
+    const ocultas = `${T} [${ATTR_COL}="0"]{display:none !important}`
+    if (!modoGrilla) return ocultas
+
     const reglas = [
       ...est.css(T),
-      `${T}{grid-template-columns:${template} !important;grid-auto-flow:row !important}`,
-      `${T} [${ATTR_COL}="0"]{display:none !important}`,
+      `${T}{grid-template-columns:${est.tracks(final)} !important;grid-auto-flow:row !important}`,
+      ocultas,
       `${T} [${ATTR_COL}="full"]{grid-column:1 / -1 !important}`,
     ]
     for (let k = 1; k <= final.length; k++) reglas.push(`${T} [${ATTR_COL}="${k}"]{grid-column:${k} !important}`)
