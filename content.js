@@ -33,6 +33,10 @@
 
   // Si la extensión se recargó con la página abierta, quedan restos de la instancia anterior.
   document.querySelectorAll(`#${STYLE_ID}, .${CLASE_PROPIA}, .civa-cell, .civa-header`).forEach((el) => el.remove())
+  document.querySelectorAll("[data-civa-title]").forEach((el) => {
+    el.removeAttribute("title")
+    el.removeAttribute("data-civa-title")
+  })
   document.querySelectorAll(`[${ATTR_TABLA}], [${ATTR_COL}], [${ATTR_FILA}]`).forEach((el) => {
     el.removeAttribute(ATTR_TABLA)
     el.removeAttribute(ATTR_COL)
@@ -299,6 +303,36 @@
     if (el.getAttribute(nombre) !== valor) el.setAttribute(nombre, valor)
   }
 
+  // ── Tooltips ─────────────────────────────────────────────────────────────
+
+  const ATTR_TITULO = "data-civa-title"
+
+  /**
+   * Campos de la grilla cuyo texto no entra (p. ej. el nombre del producto): se les pone un
+   * `title` con el texto completo para leerlo al pasar el mouse. Solo tocamos los title que
+   * pusimos nosotros (marcados con data-civa-title).
+   */
+  function tooltips(tabla) {
+    for (const input of tabla.querySelectorAll("input")) {
+      const v = input.value
+      const cortado = !!v && input.type !== "checkbox" && input.scrollWidth > input.clientWidth + 1
+      if (cortado) {
+        if (input.title !== v) input.title = v
+        if (!input.hasAttribute(ATTR_TITULO)) input.setAttribute(ATTR_TITULO, "")
+      } else if (input.hasAttribute(ATTR_TITULO)) {
+        input.removeAttribute("title")
+        input.removeAttribute(ATTR_TITULO)
+      }
+    }
+  }
+
+  function quitarTooltips(raiz) {
+    raiz.querySelectorAll(`[${ATTR_TITULO}]`).forEach((el) => {
+      el.removeAttribute("title")
+      el.removeAttribute(ATTR_TITULO)
+    })
+  }
+
   // ── Sincronización ───────────────────────────────────────────────────────
 
   function limpiarTabla(tabla) {
@@ -313,6 +347,7 @@
   function limpiar() {
     document.querySelectorAll(`[${ATTR_TABLA}]`).forEach(limpiarTabla)
     document.querySelectorAll(`.${CLASE_PROPIA}`).forEach((el) => el.remove())
+    quitarTooltips(document)
     if (style.isConnected) style.remove()
   }
 
@@ -443,6 +478,7 @@
         const css = est && sincronizarTabla(tabla, k, familia, est)
         if (css) reglas.push(css)
         else limpiarTabla(tabla) // config sin cambios o estructura inesperada: grilla original
+        tooltips(tabla)
       })
       const css = reglas.join("\n")
       if (style.textContent !== css) style.textContent = css

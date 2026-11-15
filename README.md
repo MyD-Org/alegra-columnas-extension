@@ -6,6 +6,7 @@ Personaliza la grilla de productos al crear o editar **presupuestos**, **remitos
   descuento, más impuestos) y **Precio c/IVA** (precio unitario más impuestos, sin descuento).
 - Ocultar columnas de Alegra (salvo «Producto o servicios»).
 - Cambiar el orden de las columnas.
+- Tooltip con el texto completo al pasar el mouse por un campo cortado (p. ej. el nombre del producto).
 - Elegir en qué pantallas se aplica (Presupuestos, Remitos, Facturas de venta).
 - Columnas configurables por separado para «Presupuestos y remitos» y para «Facturas de venta»,
   porque Alegra usa dos grillas distintas.
