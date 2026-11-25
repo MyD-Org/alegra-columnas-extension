@@ -229,6 +229,19 @@
     $barra.hidden = false
     document.getElementById("titulo").textContent = `${cuenta.alias || ""} · ${nt.fullNumber || f.id}`
     document.title = `Tirilla ${nt.fullNumber || f.id}`
-    if (auto) setTimeout(() => window.print(), 300)
+    if (auto) {
+      // Espera a que cargue el logo (puede venir del CDN de Alegra) antes de imprimir.
+      const imgs = [...$ticket.querySelectorAll("img")].filter((i) => !i.complete)
+      const listo = Promise.all(
+        imgs.map(
+          (i) =>
+            new Promise((ok) => {
+              i.addEventListener("load", ok, { once: true })
+              i.addEventListener("error", ok, { once: true })
+            }),
+        ),
+      )
+      Promise.race([listo, new Promise((ok) => setTimeout(ok, 4000))]).then(() => setTimeout(() => window.print(), 200))
+    }
   }
 })()

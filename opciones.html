@@ -20,13 +20,17 @@
       .nota { margin: 0 0 20px; color: var(--suave); }
       .cuenta { margin-bottom: 16px; padding: 16px; border: 1px solid var(--borde); border-radius: 10px; background: var(--fondo); }
       .cuenta h2 { margin: 0 0 12px; font-size: 15px; }
+      .cuenta h3 { margin: 20px 0 10px; padding-top: 14px; border-top: 1px solid var(--borde); font-size: 13px; font-weight: 600; }
+      details { margin-top: 14px; }
+      summary { cursor: pointer; color: var(--acento); font-size: 13px; margin-bottom: 10px; }
+      input.falta { border-color: var(--error); background: #fef2f2; }
       .grilla { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
       .grilla .ancho { grid-column: 1 / -1; }
       label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--suave); }
       input { font: inherit; font-size: 14px; color: var(--texto); padding: 6px 8px; border: 1px solid var(--borde); border-radius: 6px; background: var(--fondo); }
       input:focus { outline: 2px solid var(--acento); outline-offset: -1px; }
       .ayuda { font-size: 11px; }
-      .acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+      .acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
       button { font: inherit; padding: 6px 12px; color: var(--texto); background: var(--fondo); border: 1px solid var(--borde); border-radius: 6px; cursor: pointer; }
       button:hover { border-color: var(--acento); color: var(--acento); }
       button.primario { background: var(--acento); border-color: var(--acento); color: #fff; }

@@ -6,6 +6,11 @@
   const $estado = document.getElementById("estado")
   let cuentas = await TIRILLA_CUENTAS.leer()
   let timer = null
+  const CREDENCIALES = ["email", "token"]
+  const OBLIGATORIOS = ["razonSocial", "cuit", "domicilio", "condicionIva", "iibb", "inicioActividades"]
+  /** Mensaje de «Probar conexión» por cuenta y cuentas donde se marcan los faltantes. */
+  const mensajes = new Map()
+  const marcarFaltantes = new Set()
 
   async function guardar(msj = "Guardado") {
     await TIRILLA_CUENTAS.guardar(cuentas)
@@ -30,30 +35,12 @@
     return String(regime)
   }
 
-  /** Logo de Alegra (URL) → data URL. Si no se puede bajar, se ignora. */
-  async function logoComoDataUrl(url) {
-    try {
-      const r = await fetch(url)
-      if (!r.ok) return ""
-      const blob = await r.blob()
-      if (!blob.type.startsWith("image/") || blob.size > 300_000) return ""
-      return await new Promise((ok) => {
-        const lector = new FileReader()
-        lector.onload = () => ok(String(lector.result))
-        lector.onerror = () => ok("")
-        lector.readAsDataURL(blob)
-      })
-    } catch {
-      return ""
-    }
-  }
-
   /**
    * Datos de /company → campos del encabezado. Completa los vacíos y corrige los que una
    * versión anterior cargó en crudo (CUIT sin guiones, «Régimen general»).
    * Ingresos Brutos e inicio de actividades no vienen en la API: se cargan a mano.
    */
-  async function completarDesdeEmpresa(cuenta, empresa) {
+  function completarDesdeEmpresa(cuenta, empresa) {
     if (!empresa || typeof empresa !== "object") return
     const dir = empresa.address
     const domicilio =
@@ -77,7 +64,8 @@
       if (!actual || crudo) cuenta[k] = String(v)
     }
     if (!cuenta.logo && typeof empresa.logo === "string" && /^https:\/\//.test(empresa.logo)) {
-      cuenta.logo = await logoComoDataUrl(empresa.logo)
+      // Se guarda la URL: el CDN de Alegra no permite descargarla (CORS), pero <img> la muestra.
+      cuenta.logo = empresa.logo
     }
   }
 
@@ -87,33 +75,98 @@
         const caja = document.createElement("section")
         caja.className = "cuenta"
         const h2 = document.createElement("h2")
-        h2.textContent = cuenta.alias || "Cuenta sin nombre"
-        const grilla = document.createElement("div")
-        grilla.className = "grilla"
+        h2.textContent = cuenta.alias || "Nueva cuenta"
 
-        for (const campo of TIRILLA_CUENTAS.CAMPOS) {
+        const campo = (def) => {
           const label = document.createElement("label")
-          if (["domicilio", "token"].includes(campo.id)) label.className = "ancho"
+          if (["domicilio"].includes(def.id)) label.className = "ancho"
           const input = document.createElement("input")
-          input.type = campo.tipo || "text"
-          input.value = cuenta[campo.id] || ""
+          input.type = def.tipo || "text"
+          input.value = cuenta[def.id] || ""
           input.autocomplete = "off"
+          if (marcarFaltantes.has(cuenta) && OBLIGATORIOS.includes(def.id) && !cuenta[def.id]) input.classList.add("falta")
           input.addEventListener("change", () => {
-            cuenta[campo.id] = input.value.trim()
-            if (campo.id === "alias") h2.textContent = cuenta.alias || "Cuenta sin nombre"
+            cuenta[def.id] = input.value.trim()
+            if (CREDENCIALES.includes(def.id) && cuenta.conectada) {
+              cuenta.conectada = false
+              mensajes.delete(cuenta)
+              guardar()
+              render()
+              return
+            }
+            if (cuenta[def.id]) input.classList.remove("falta")
             guardar()
           })
-          label.append(campo.titulo, input)
-          if (campo.ayuda) {
+          label.append(def.titulo, input)
+          if (def.ayuda) {
             const a = document.createElement("span")
             a.className = "ayuda"
-            a.textContent = campo.ayuda
+            a.textContent = def.ayuda
             label.append(a)
           }
-          grilla.append(label)
+          return label
         }
 
-        // Logo (opcional): se guarda como data URL.
+        // 1. Conexión
+        const conexion = document.createElement("div")
+        conexion.className = "grilla"
+        for (const def of TIRILLA_CUENTAS.CAMPOS.filter((c) => CREDENCIALES.includes(c.id))) conexion.append(campo(def))
+
+        const acciones = document.createElement("div")
+        acciones.className = "acciones"
+        const probar = document.createElement("button")
+        probar.type = "button"
+        probar.className = "primario"
+        probar.textContent = "Probar conexión"
+        const res = document.createElement("span")
+        const previo = mensajes.get(cuenta)
+        res.className = "estado" + (previo && previo.error ? " error" : "")
+        res.textContent = previo ? previo.texto : ""
+        probar.addEventListener("click", async () => {
+          res.className = "estado"
+          res.textContent = "Probando…"
+          try {
+            const { status, datos } = await TIRILLA_CUENTAS.get(cuenta, "/company")
+            if (status === 401 || status === 403) throw new Error("El correo o el token no son válidos.")
+            if (status !== 200) throw new Error(`Alegra respondió ${status}.`)
+            completarDesdeEmpresa(cuenta, datos)
+            // El nombre de la cuenta sale de Alegra: sirve para distinguir empresas en la tirilla.
+            if (datos && datos.name) cuenta.alias = String(datos.name)
+            cuenta.conectada = true
+            await guardar("Conexión correcta")
+            const faltan = TIRILLA_CUENTAS.CAMPOS.filter((c) => OBLIGATORIOS.includes(c.id) && !cuenta[c.id])
+            mensajes.set(cuenta, {
+              texto:
+                `Conectado a ${datos && datos.name ? datos.name : "Alegra"}.` +
+                (faltan.length ? " Complete abajo los datos que faltan." : " Están todos los datos."),
+              error: false,
+            })
+            marcarFaltantes.add(cuenta)
+          } catch (e) {
+            mensajes.set(cuenta, { texto: e.message || "No se pudo conectar con Alegra.", error: true })
+          }
+          render()
+        })
+        acciones.append(probar, res)
+
+        // 2. Encabezado de la tirilla: aparece después de conectar. Primero se piden los datos
+        //    obligatorios que Alegra no trajo; el resto queda plegado.
+        const datosEncabezado = TIRILLA_CUENTAS.CAMPOS.filter((c) => !CREDENCIALES.includes(c.id))
+        const faltantes = datosEncabezado.filter((c) => OBLIGATORIOS.includes(c.id) && !cuenta[c.id])
+        const h3 = document.createElement("h3")
+        h3.textContent = faltantes.length ? "Complete estos datos para la tirilla" : "Datos de la tirilla completos"
+        const pedidos = document.createElement("div")
+        pedidos.className = "grilla"
+        for (const def of faltantes) pedidos.append(campo(def))
+        const todos = document.createElement("details")
+        const resumen = document.createElement("summary")
+        resumen.textContent = "Ver o editar todos los datos del encabezado"
+        const encabezado = document.createElement("div")
+        encabezado.className = "grilla"
+        for (const def of datosEncabezado.filter((c) => !faltantes.includes(c))) encabezado.append(campo(def))
+        todos.append(resumen, encabezado)
+
+        // Logo (opcional): data URL si se sube a mano, o la URL del logo de Alegra.
         const logo = document.createElement("div")
         logo.className = "logo ancho"
         const img = document.createElement("img")
@@ -150,38 +203,10 @@
         const lLogo = document.createElement("label")
         lLogo.append("Logo (opcional, en blanco y negro se imprime mejor)", archivo)
         logo.append(lLogo, img, quitarLogo)
-        grilla.append(logo)
+        encabezado.append(logo)
 
-        const acciones = document.createElement("div")
-        acciones.className = "acciones"
-        const probar = document.createElement("button")
-        probar.type = "button"
-        probar.className = "primario"
-        probar.textContent = "Probar conexión"
-        const res = document.createElement("span")
-        res.className = "estado"
-        probar.addEventListener("click", async () => {
-          res.className = "estado"
-          res.textContent = "Probando…"
-          try {
-            const { status, datos } = await TIRILLA_CUENTAS.get(cuenta, "/company")
-            if (status === 401 || status === 403) throw new Error("El correo o el token no son válidos.")
-            if (status !== 200) throw new Error(`Alegra respondió ${status}.`)
-            await completarDesdeEmpresa(cuenta, datos)
-            await guardar("Conexión correcta")
-            render()
-            const faltan = TIRILLA_CUENTAS.CAMPOS.filter((c) => !["alias", "nombreFantasia"].includes(c.id) && !cuenta[c.id])
-            const $res = document.querySelectorAll(".cuenta")[cuentas.indexOf(cuenta)]?.querySelector(".acciones .estado")
-            if ($res) {
-              $res.textContent =
-                `Conectado a ${datos && datos.name ? datos.name : "Alegra"}.` +
-                (faltan.length ? ` Complete a mano: ${faltan.map((c) => c.titulo).join(", ")}.` : "")
-            }
-          } catch (e) {
-            res.className = "estado error"
-            res.textContent = e.message || "No se pudo conectar con Alegra."
-          }
-        })
+        const pie = document.createElement("div")
+        pie.className = "acciones"
         const borrar = document.createElement("button")
         borrar.type = "button"
         borrar.className = "peligro"
@@ -192,9 +217,10 @@
           guardar("Cuenta eliminada")
           render()
         })
-        acciones.append(probar, borrar, res)
+        pie.append(borrar)
 
-        caja.append(h2, grilla, acciones)
+        if (cuenta.conectada || cuenta.razonSocial) caja.append(h2, conexion, acciones, h3, pedidos, todos, pie)
+        else caja.append(h2, conexion, acciones, pie)
         return caja
       }),
     )
