@@ -12,6 +12,17 @@
   const id = (params.get("id") || "").replace(/\D/g, "")
   const numeroPantalla = (params.get("numero") || "").trim()
   const auto = params.get("auto") !== "0"
+  // Dentro del recuadro que abre tirilla-boton.js sobre Alegra (iframe): sin barra propia;
+  // al terminar de imprimir (o cancelar) le pide a Alegra que cierre el recuadro.
+  const enRecuadro = params.get("modal") === "1" && window.parent !== window
+  const avisarAlegra = (accion) => window.parent.postMessage({ civaTirilla: accion }, "https://app.alegra.com")
+  if (enRecuadro) {
+    document.documentElement.classList.add("en-recuadro")
+    window.addEventListener("afterprint", () => avisarAlegra("cerrar"))
+    window.addEventListener("message", (e) => {
+      if (e.origin === "https://app.alegra.com" && e.data && e.data.civaTirilla === "imprimir") window.print()
+    })
+  }
 
   const $mensaje = document.getElementById("mensaje")
   const $ticket = document.getElementById("ticket")
@@ -94,6 +105,47 @@
     )
   }
   dibujar(candidatas[0].cuenta, candidatas[0].factura)
+
+  // ── QR ───────────────────────────────────────────────────────────────────
+
+  /**
+   * QR para impresora térmica de 203 dpi (8 puntos por mm). Cada módulo ocupa un número
+   * ENTERO de puntos de la impresora y se dibuja sin suavizado: si el tamaño no calza con
+   * la grilla de la impresora, Chrome lo reescala, los bordes salen grises y la térmica los
+   * imprime como puntos sueltos (QR ilegible). Lleva el margen blanco de 4 módulos que pide
+   * el estándar.
+   */
+  function qrNitido(texto) {
+    const PUNTOS_POR_MM = 8
+    const MAX_MM = 56
+    const MARGEN = 4
+    // Corrección «L»: menos módulos para el mismo enlace, así cada uno sale más grande.
+    // En papel térmico la impresión es pareja; lo que hace ilegible el QR es el módulo chico.
+    const qr = qrcode(0, "L")
+    qr.addData(texto)
+    qr.make()
+    const n = qr.getModuleCount()
+    const total = n + MARGEN * 2
+    const puntos = Math.max(3, Math.floor((MAX_MM * PUNTOS_POR_MM) / total))
+    const lado = total * puntos
+    const canvas = document.createElement("canvas")
+    canvas.width = lado
+    canvas.height = lado
+    const ctx = canvas.getContext("2d")
+    ctx.imageSmoothingEnabled = false
+    ctx.fillStyle = "#fff"
+    ctx.fillRect(0, 0, lado, lado)
+    ctx.fillStyle = "#000"
+    for (let f = 0; f < n; f++)
+      for (let c = 0; c < n; c++) if (qr.isDark(f, c)) ctx.fillRect((c + MARGEN) * puntos, (f + MARGEN) * puntos, puntos, puntos)
+    const img = document.createElement("img")
+    img.className = "qr"
+    img.alt = "QR de ARCA"
+    img.src = canvas.toDataURL("image/png")
+    img.style.width = img.style.height = `${lado / PUNTOS_POR_MM}mm`
+    img.dataset.modulo = `${puntos / PUNTOS_POR_MM}mm`
+    return img
+  }
 
   // ── Dibujo ───────────────────────────────────────────────────────────────
 
@@ -208,12 +260,7 @@
     if (autorizada) {
       nodos.push(sep())
       if (stamp.fiscalQrUrl) {
-        const qr = qrcode(0, "M")
-        qr.addData(stamp.fiscalQrUrl)
-        qr.make()
-        const caja = el("div", "qr")
-        caja.innerHTML = qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true })
-        nodos.push(caja)
+        nodos.push(qrNitido(stamp.fiscalQrUrl))
       }
       nodos.push(fila("CAE", stamp.cae, "b"))
       nodos.push(fila("Vto. CAE", fecha(stamp.caeDueDate)))
@@ -226,7 +273,7 @@
     $ticket.replaceChildren(...nodos)
     $ticket.hidden = false
     $mensaje.hidden = true
-    $barra.hidden = false
+    $barra.hidden = enRecuadro
     document.getElementById("titulo").textContent = `${cuenta.alias || ""} · ${nt.fullNumber || f.id}`
     document.title = `Tirilla ${nt.fullNumber || f.id}`
     if (auto) {

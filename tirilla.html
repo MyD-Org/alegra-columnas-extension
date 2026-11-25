@@ -15,6 +15,8 @@
       #mensaje { max-width: 420px; margin: 40px auto; padding: 16px; background: #fff; border-radius: 8px; font-size: 14px; line-height: 1.5; }
       #mensaje button { margin: 6px 6px 0 0; font: inherit; padding: 6px 12px; cursor: pointer; }
       #ticket { width: 72mm; margin: 16px auto; padding: 3mm 1mm 6mm; background: #fff; }
+      .en-recuadro body { background: #fff; }
+      .en-recuadro #ticket { margin: 8px auto; }
       @media print {
         html, body { background: #fff; }
         .barra, #mensaje { display: none !important; }
@@ -32,8 +34,8 @@
       .fila > :last-child { text-align: right; white-space: nowrap; }
       .item { margin-bottom: 3px; }
       .item .desc { word-break: break-word; }
-      .qr { display: block; width: 32mm; height: 32mm; margin: 4px auto 2px; }
-      .qr svg { width: 100%; height: 100%; }
+      /* Tamaño exacto en mm desde tirilla.js; sin suavizado para que la térmica imprima módulos limpios. */
+      .qr { display: block; margin: 2px auto 0; image-rendering: pixelated; image-rendering: crisp-edges; }
     </style>
   </head>
   <body>

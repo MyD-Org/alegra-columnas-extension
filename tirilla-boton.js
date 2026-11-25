@@ -1,4 +1,5 @@
-// «Imprimir tirilla» en Alegra. Abre tirilla.html en una pestaña nueva.
+// «Imprimir tirilla» en Alegra. Abre la tirilla en un recuadro encima de Alegra (iframe con
+// tirilla.html) y lanza la impresión; el recuadro se cierra solo al imprimir o cancelar.
 //  - Vista de una factura (app.alegra.com/invoice/view/id/<id>): copia del botón «Imprimir»
 //    de la barra (.header-actions), a su derecha; flotante mientras la barra no se dibuja.
 //  - Lista de facturas: opción extra en el menú de los 3 puntos de cada fila. Alegra arma
@@ -40,13 +41,110 @@
     return m ? m[0] : ""
   }
 
+  // ── Recuadro con la tirilla, encima de Alegra ────────────────────────────
+  // La tirilla se carga en un iframe (tirilla.html es web_accessible) y se imprime sola:
+  // el cuadro de impresión de Chrome imprime solo el iframe. Al imprimir o cancelar, el
+  // iframe avisa con postMessage y el recuadro se cierra.
+
+  const ID_RECUADRO = "civa-tirilla-recuadro"
+  document.getElementById(ID_RECUADRO)?.remove()
+
+  function cerrarRecuadro() {
+    document.getElementById(ID_RECUADRO)?.remove()
+    window.removeEventListener("message", alMensaje)
+    document.removeEventListener("keydown", alTeclado, true)
+  }
+
+  function alMensaje(e) {
+    const iframe = document.querySelector(`#${ID_RECUADRO} iframe`)
+    if (!iframe || e.source !== iframe.contentWindow) return
+    if (e.data && e.data.civaTirilla === "cerrar") cerrarRecuadro()
+  }
+
+  function alTeclado(e) {
+    if (e.key === "Escape") cerrarRecuadro()
+  }
+
+  function botonRecuadro(texto, primario, alClick) {
+    const b = document.createElement("button")
+    b.type = "button"
+    b.textContent = texto
+    Object.assign(b.style, {
+      font: "600 13px system-ui, -apple-system, 'Segoe UI', sans-serif",
+      padding: "6px 14px",
+      borderRadius: "6px",
+      cursor: "pointer",
+      border: primario ? "0" : "1px solid #64748b",
+      background: primario ? "#30aba9" : "transparent",
+      color: "#fff",
+    })
+    b.addEventListener("click", alClick)
+    return b
+  }
+
   function abrirTirilla(id, numero) {
     if (!vivo()) {
       alert("La extensión se actualizó. Recargue esta página (F5) y vuelva a intentarlo.")
       return
     }
-    const q = new URLSearchParams({ id, numero: numero || "" })
-    window.open(chrome.runtime.getURL(`tirilla.html?${q}`), "_blank")
+    cerrarRecuadro()
+    const q = new URLSearchParams({ id, numero: numero || "", modal: "1" })
+
+    const fondo = document.createElement("div")
+    fondo.id = ID_RECUADRO
+    Object.assign(fondo.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "2147483001",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "rgb(15 23 42 / .45)",
+    })
+    fondo.addEventListener("click", (e) => e.target === fondo && cerrarRecuadro())
+
+    const panel = document.createElement("div")
+    Object.assign(panel.style, {
+      display: "flex",
+      flexDirection: "column",
+      width: "360px",
+      maxWidth: "calc(100vw - 32px)",
+      height: "min(860px, calc(100vh - 48px))",
+      borderRadius: "10px",
+      overflow: "hidden",
+      background: "#fff",
+      boxShadow: "0 20px 50px rgb(0 0 0 / .3)",
+    })
+
+    const iframe = document.createElement("iframe")
+    iframe.title = "Tirilla"
+    iframe.src = chrome.runtime.getURL(`tirilla.html?${q}`)
+    Object.assign(iframe.style, { flex: "1", width: "100%", border: "0", background: "#fff" })
+
+    const barra = document.createElement("div")
+    Object.assign(barra.style, {
+      display: "flex",
+      alignItems: "center",
+      gap: "8px",
+      padding: "10px 12px",
+      background: "#1e293b",
+      color: "#fff",
+      font: "600 13px system-ui, -apple-system, 'Segoe UI', sans-serif",
+    })
+    const titulo = document.createElement("span")
+    titulo.textContent = `Tirilla ${numero || ""}`.trim()
+    titulo.style.flex = "1"
+    barra.append(
+      titulo,
+      botonRecuadro("Imprimir", true, () => iframe.contentWindow.postMessage({ civaTirilla: "imprimir" }, "*")),
+      botonRecuadro("Cerrar", false, cerrarRecuadro),
+    )
+
+    panel.append(barra, iframe)
+    fondo.append(panel)
+    document.body.append(fondo)
+    window.addEventListener("message", alMensaje)
+    document.addEventListener("keydown", alTeclado, true)
   }
 
   // ── Menú de los 3 puntos en la lista ─────────────────────────────────────
