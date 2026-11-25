@@ -12,6 +12,17 @@
   const id = (params.get("id") || "").replace(/\D/g, "")
   const numeroPantalla = (params.get("numero") || "").trim()
   const auto = params.get("auto") !== "0"
+  // Dentro del recuadro que abre tirilla-boton.js sobre Alegra (iframe): sin barra propia;
+  // al terminar de imprimir (o cancelar) le pide a Alegra que cierre el recuadro.
+  const enRecuadro = params.get("modal") === "1" && window.parent !== window
+  const avisarAlegra = (accion) => window.parent.postMessage({ civaTirilla: accion }, "https://app.alegra.com")
+  if (enRecuadro) {
+    document.documentElement.classList.add("en-recuadro")
+    window.addEventListener("afterprint", () => avisarAlegra("cerrar"))
+    window.addEventListener("message", (e) => {
+      if (e.origin === "https://app.alegra.com" && e.data && e.data.civaTirilla === "imprimir") window.print()
+    })
+  }
 
   const $mensaje = document.getElementById("mensaje")
   const $ticket = document.getElementById("ticket")
@@ -262,7 +273,7 @@
     $ticket.replaceChildren(...nodos)
     $ticket.hidden = false
     $mensaje.hidden = true
-    $barra.hidden = false
+    $barra.hidden = enRecuadro
     document.getElementById("titulo").textContent = `${cuenta.alias || ""} · ${nt.fullNumber || f.id}`
     document.title = `Tirilla ${nt.fullNumber || f.id}`
     if (auto) {

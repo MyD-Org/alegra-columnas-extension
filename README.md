@@ -17,9 +17,11 @@ abiertas.
 
 ## Tirilla de facturas (80 mm)
 
-En la vista de una factura de venta (`/invoice/view/id/…`) aparece el botón **Imprimir tirilla**.
-Abre una pestaña con la factura en formato ticket de 80 mm y lanza la impresión (elija la
-impresora térmica, por ejemplo `Gadnic_Tickets`, con márgenes «Ninguno»).
+En la vista de una factura de venta (`/invoice/view/id/…`) aparece el botón **Imprimir tirilla**
+al lado de «Imprimir», y en la lista de facturas, en el menú de los 3 puntos de cada fila. Abre
+un recuadro encima de Alegra con la factura en formato ticket de 80 mm y lanza la impresión
+(elija la impresora térmica, por ejemplo `Gadnic_Tickets`, con márgenes «Ninguno» y escala
+«Predeterminado»). Al imprimir o cancelar, el recuadro se cierra solo.
 
 - Lee la factura de la **API de Alegra** (solo consultas, nunca crea ni modifica nada).
 - Factura **A**: precios netos e IVA discriminado por alícuota. **B**: precios con IVA y la
