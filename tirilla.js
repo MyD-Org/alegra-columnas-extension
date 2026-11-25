@@ -38,6 +38,7 @@
   const redondear = (n) => Math.round((Number(n) || 0) * 100) / 100
 
   function mensaje(texto, ...botones) {
+    if (enRecuadro) avisarAlegra("mostrar") // hay algo que leer: Alegra muestra el recuadro
     $mensaje.hidden = false
     $mensaje.replaceChildren(texto, ...botones)
   }
@@ -288,7 +289,10 @@
             }),
         ),
       )
-      Promise.race([listo, new Promise((ok) => setTimeout(ok, 4000))]).then(() => setTimeout(() => window.print(), 200))
+      Promise.race([listo, new Promise((ok) => setTimeout(ok, 4000))]).then(() => setTimeout(() => {
+        if (enRecuadro) avisarAlegra("imprimiendo")
+        window.print()
+      }, 200))
     }
   }
 })()

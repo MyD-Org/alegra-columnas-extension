@@ -49,7 +49,45 @@
   const ID_RECUADRO = "civa-tirilla-recuadro"
   document.getElementById(ID_RECUADRO)?.remove()
 
+  const ID_AVISO = "civa-tirilla-aviso"
+  document.getElementById(ID_AVISO)?.remove()
+  let plazo = null
+
+  /** Aviso chico mientras se arma la tirilla (el recuadro queda oculto). */
+  function aviso(texto) {
+    document.getElementById(ID_AVISO)?.remove()
+    if (!texto) return
+    const a = document.createElement("div")
+    a.id = ID_AVISO
+    a.textContent = texto
+    Object.assign(a.style, {
+      position: "fixed",
+      left: "50%",
+      bottom: "24px",
+      transform: "translateX(-50%)",
+      zIndex: "2147483002",
+      padding: "10px 16px",
+      borderRadius: "8px",
+      background: "#1e293b",
+      color: "#fff",
+      font: "600 13px system-ui, -apple-system, 'Segoe UI', sans-serif",
+      boxShadow: "0 6px 18px rgb(0 0 0 / .25)",
+    })
+    document.body.append(a)
+  }
+
+  /** Muestra el recuadro (solo cuando la tirilla tiene un aviso o tarda demasiado). */
+  function mostrarRecuadro() {
+    const fondo = document.getElementById(ID_RECUADRO)
+    if (!fondo) return
+    aviso("")
+    clearTimeout(plazo)
+    Object.assign(fondo.style, { left: "0", top: "0", opacity: "1", pointerEvents: "auto" })
+  }
+
   function cerrarRecuadro() {
+    aviso("")
+    clearTimeout(plazo)
     document.getElementById(ID_RECUADRO)?.remove()
     window.removeEventListener("message", alMensaje)
     document.removeEventListener("keydown", alTeclado, true)
@@ -59,6 +97,11 @@
     const iframe = document.querySelector(`#${ID_RECUADRO} iframe`)
     if (!iframe || e.source !== iframe.contentWindow) return
     if (e.data && e.data.civaTirilla === "cerrar") cerrarRecuadro()
+    if (e.data && e.data.civaTirilla === "mostrar") mostrarRecuadro()
+    if (e.data && e.data.civaTirilla === "imprimiendo") {
+      aviso("")
+      clearTimeout(plazo)
+    }
   }
 
   function alTeclado(e) {
@@ -94,7 +137,8 @@
     fondo.id = ID_RECUADRO
     Object.assign(fondo.style, {
       position: "fixed",
-      inset: "0",
+      width: "100vw",
+      height: "100vh",
       zIndex: "2147483001",
       display: "flex",
       alignItems: "center",
@@ -142,7 +186,12 @@
 
     panel.append(barra, iframe)
     fondo.append(panel)
+    // Oculto (fuera de pantalla, no display:none: así el iframe carga e imprime bien). Solo se
+    // ve el cuadro de impresión; el recuadro aparece si la tirilla avisa un problema.
+    Object.assign(fondo.style, { left: "-10000px", top: "0", opacity: "0", pointerEvents: "none" })
     document.body.append(fondo)
+    aviso("Preparando la tirilla…")
+    plazo = setTimeout(mostrarRecuadro, 15000)
     window.addEventListener("message", alMensaje)
     document.addEventListener("keydown", alTeclado, true)
   }
