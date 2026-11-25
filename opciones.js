@@ -6,7 +6,7 @@
   const $estado = document.getElementById("estado")
   let cuentas = await TIRILLA_CUENTAS.leer()
   let timer = null
-  const CREDENCIALES = ["alias", "email", "token"]
+  const CREDENCIALES = ["email", "token"]
   const OBLIGATORIOS = ["razonSocial", "cuit", "domicilio", "condicionIva", "iibb", "inicioActividades"]
   /** Mensaje de «Probar conexión» por cuenta y cuentas donde se marcan los faltantes. */
   const mensajes = new Map()
@@ -75,11 +75,11 @@
         const caja = document.createElement("section")
         caja.className = "cuenta"
         const h2 = document.createElement("h2")
-        h2.textContent = cuenta.alias || "Cuenta sin nombre"
+        h2.textContent = cuenta.alias || "Nueva cuenta"
 
         const campo = (def) => {
           const label = document.createElement("label")
-          if (["domicilio", "token"].includes(def.id)) label.className = "ancho"
+          if (["domicilio"].includes(def.id)) label.className = "ancho"
           const input = document.createElement("input")
           input.type = def.tipo || "text"
           input.value = cuenta[def.id] || ""
@@ -87,8 +87,14 @@
           if (marcarFaltantes.has(cuenta) && OBLIGATORIOS.includes(def.id) && !cuenta[def.id]) input.classList.add("falta")
           input.addEventListener("change", () => {
             cuenta[def.id] = input.value.trim()
+            if (CREDENCIALES.includes(def.id) && cuenta.conectada) {
+              cuenta.conectada = false
+              mensajes.delete(cuenta)
+              guardar()
+              render()
+              return
+            }
             if (cuenta[def.id]) input.classList.remove("falta")
-            if (def.id === "alias") h2.textContent = cuenta.alias || "Cuenta sin nombre"
             guardar()
           })
           label.append(def.titulo, input)
@@ -124,12 +130,15 @@
             if (status === 401 || status === 403) throw new Error("El correo o el token no son válidos.")
             if (status !== 200) throw new Error(`Alegra respondió ${status}.`)
             completarDesdeEmpresa(cuenta, datos)
+            // El nombre de la cuenta sale de Alegra: sirve para distinguir empresas en la tirilla.
+            if (datos && datos.name) cuenta.alias = String(datos.name)
+            cuenta.conectada = true
             await guardar("Conexión correcta")
             const faltan = TIRILLA_CUENTAS.CAMPOS.filter((c) => OBLIGATORIOS.includes(c.id) && !cuenta[c.id])
             mensajes.set(cuenta, {
               texto:
                 `Conectado a ${datos && datos.name ? datos.name : "Alegra"}.` +
-                (faltan.length ? ` Complete a mano (marcados en rojo): ${faltan.map((c) => c.titulo).join(", ")}.` : " Están todos los datos."),
+                (faltan.length ? " Complete abajo los datos que faltan." : " Están todos los datos."),
               error: false,
             })
             marcarFaltantes.add(cuenta)
@@ -140,12 +149,22 @@
         })
         acciones.append(probar, res)
 
-        // 2. Encabezado de la tirilla
+        // 2. Encabezado de la tirilla: aparece después de conectar. Primero se piden los datos
+        //    obligatorios que Alegra no trajo; el resto queda plegado.
+        const datosEncabezado = TIRILLA_CUENTAS.CAMPOS.filter((c) => !CREDENCIALES.includes(c.id))
+        const faltantes = datosEncabezado.filter((c) => OBLIGATORIOS.includes(c.id) && !cuenta[c.id])
         const h3 = document.createElement("h3")
-        h3.textContent = "Datos del encabezado de la tirilla"
+        h3.textContent = faltantes.length ? "Complete estos datos para la tirilla" : "Datos de la tirilla completos"
+        const pedidos = document.createElement("div")
+        pedidos.className = "grilla"
+        for (const def of faltantes) pedidos.append(campo(def))
+        const todos = document.createElement("details")
+        const resumen = document.createElement("summary")
+        resumen.textContent = "Ver o editar todos los datos del encabezado"
         const encabezado = document.createElement("div")
         encabezado.className = "grilla"
-        for (const def of TIRILLA_CUENTAS.CAMPOS.filter((c) => !CREDENCIALES.includes(c.id))) encabezado.append(campo(def))
+        for (const def of datosEncabezado.filter((c) => !faltantes.includes(c))) encabezado.append(campo(def))
+        todos.append(resumen, encabezado)
 
         // Logo (opcional): data URL si se sube a mano, o la URL del logo de Alegra.
         const logo = document.createElement("div")
@@ -200,7 +219,8 @@
         })
         pie.append(borrar)
 
-        caja.append(h2, conexion, acciones, h3, encabezado, pie)
+        if (cuenta.conectada || cuenta.razonSocial) caja.append(h2, conexion, acciones, h3, pedidos, todos, pie)
+        else caja.append(h2, conexion, acciones, pie)
         return caja
       }),
     )

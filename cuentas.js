@@ -9,7 +9,6 @@ var TIRILLA_CUENTAS = (() => {
   const API = "https://api.alegra.com/api/v1"
 
   const CAMPOS = [
-    { id: "alias", titulo: "Nombre de la cuenta", ayuda: "Por ejemplo: Iguazú" },
     { id: "email", titulo: "Correo del usuario de Alegra", tipo: "email" },
     { id: "token", titulo: "Token de API", tipo: "password", ayuda: "Alegra → Configuración → Integraciones con otros sistemas → API" },
     { id: "razonSocial", titulo: "Razón social" },
@@ -21,7 +20,7 @@ var TIRILLA_CUENTAS = (() => {
     { id: "inicioActividades", titulo: "Inicio de actividades", ayuda: "dd/mm/aaaa" },
   ]
 
-  const nueva = () => ({ id: String(Date.now()), ...Object.fromEntries(CAMPOS.map((c) => [c.id, ""])), logo: "" })
+  const nueva = () => ({ id: String(Date.now()), alias: "", ...Object.fromEntries(CAMPOS.map((c) => [c.id, ""])), logo: "" })
 
   async function leer() {
     const { [CLAVE]: cuentas } = await chrome.storage.local.get(CLAVE)
