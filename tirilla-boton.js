@@ -1,5 +1,6 @@
 // «Imprimir tirilla» en Alegra. Abre tirilla.html en una pestaña nueva.
-//  - Vista de una factura (app.alegra.com/invoice/view/id/<id>): botón flotante propio.
+//  - Vista de una factura (app.alegra.com/invoice/view/id/<id>): copia del botón «Imprimir»
+//    de la barra (.header-actions), a su derecha; flotante mientras la barra no se dibuja.
 //  - Lista de facturas: opción extra en el menú de los 3 puntos de cada fila. Alegra arma
 //    ese menú recién al abrirlo (td.sm-table-container-td .more-actions > .actions), así
 //    que se agrega cuando aparece. El id sale del enlace de la fila (/invoice/view/id/<id>).
@@ -37,14 +38,16 @@
     const m = enlace && enlace.getAttribute("href").match(/\/invoice\/view\/id\/(\d+)/)
     if (!m) return
     const numero = (fila.querySelector(".cell-number .number") || {}).textContent || ""
-    const modelo = menu.querySelector("button")
-    const b = document.createElement("button")
-    b.type = "button"
-    b.className = (modelo ? modelo.className : "s-button small default outline") + " " + CLASE_MENU
-    b.title = "Imprimir esta factura en formato ticket de 80 mm"
-    const texto = document.createElement("span")
-    texto.textContent = "Imprimir tirilla"
-    b.append(texto)
+    const modelo = [...menu.querySelectorAll("button")].find(esImprimir) || menu.querySelector("button")
+    let b
+    if (modelo) b = clonarBoton(modelo, "Imprimir tirilla")
+    else {
+      b = document.createElement("button")
+      b.type = "button"
+      b.className = "s-button small default outline"
+      b.textContent = "Imprimir tirilla"
+    }
+    b.classList.add(CLASE_MENU)
     b.addEventListener("click", (ev) => {
       ev.preventDefault()
       ev.stopPropagation()
@@ -59,7 +62,7 @@
       // Alegra puede redibujar la barra y llevarse el botón: se vuelve a crear.
       const b = document.getElementById(ID)
       if (!b) ubicar(boton())
-      else if (!b.className && botonImprimirDeAlegra()) ubicar(b)
+      else if (!b.closest(".header-actions") && barra()) ubicar(b)
       return
     }
     if (!/^\/invoice\/?$/.test(location.pathname)) return
@@ -95,31 +98,63 @@
     return b
   }
 
-  /** Botón «Imprimir» de la barra de la factura (Descargar PDF, Compartir…), si ya se dibujó. */
-  function botonImprimirDeAlegra() {
-    return [...document.querySelectorAll("main button")].find(
-      (b) => /^\s*Imprimir\s*$/.test(b.textContent) && !b.closest("." + CLASE_MENU) && b.id !== ID,
-    )
+  const CLASE_CAJA = "civa-tirilla-caja"
+  document.querySelectorAll("." + CLASE_CAJA).forEach((el) => el.remove())
+
+  /** Barra de acciones de la factura (Imprimir, Descargar PDF, Compartir, Más acciones). */
+  const barra = () => document.querySelector(".header-actions")
+
+  /**
+   * Copia de un botón de Alegra con otro texto. Se clona (sin sus eventos) porque los estilos
+   * de Alegra dependen de atributos data-v-* de Vue, no solo de las clases.
+   */
+  function clonarBoton(modelo, texto) {
+    const b = modelo.cloneNode(true)
+    b.removeAttribute("id")
+    b.type = "button"
+    const hoja = [...b.querySelectorAll("*")].reverse().find((e) => !e.children.length && e.textContent.trim())
+    if (hoja) hoja.textContent = texto
+    else b.textContent = texto
+    b.title = "Imprimir esta factura en formato ticket de 80 mm"
+    return b
   }
 
-  /** Pone el botón al lado de «Imprimir», con su mismo estilo; si no lo encuentra, queda flotante. */
-  function ubicar(b) {
-    const imprimir = botonImprimirDeAlegra()
-    if (imprimir) {
-      if (b.nextElementSibling === imprimir.nextElementSibling && b.previousElementSibling === imprimir) return
-      b.removeAttribute("style")
-      b.className = imprimir.className
-      imprimir.after(b)
-    } else if (!b.isConnected) {
-      document.body.append(b)
+  const esImprimir = (b) => b.textContent.trim() === "Imprimir"
+
+  /**
+   * Pone «Imprimir tirilla» en la barra, después de «Imprimir», como copia de ese botón.
+   * Si la barra todavía no se dibujó, queda el botón flotante abajo a la izquierda.
+   */
+  function ubicar(flotante) {
+    if (flotante.closest(".header-actions")) return
+    const bar = barra()
+    const imprimir = bar && [...bar.querySelectorAll("button")].find(esImprimir)
+    if (!imprimir) {
+      if (!flotante.isConnected) document.body.append(flotante)
+      return
     }
+    flotante.remove()
+    const modeloCaja = bar.querySelector("#btn-h-1") || imprimir.parentElement
+    const caja = modeloCaja.cloneNode(false)
+    caja.removeAttribute("id")
+    caja.classList.add(CLASE_CAJA)
+    const b = clonarBoton(imprimir, "Imprimir tirilla")
+    b.id = ID
+    b.addEventListener("click", (ev) => {
+      ev.preventDefault()
+      ev.stopPropagation()
+      const m = location.pathname.match(RUTA)
+      if (m) abrirTirilla(m[1], numeroEnPantalla())
+    })
+    caja.append(b)
+    ;(bar.firstElementChild || bar).after(caja)
   }
 
   function sincronizar() {
     const enFactura = RUTA.test(location.pathname)
     const actual = document.getElementById(ID)
     if (enFactura) ubicar(actual || boton())
-    if (!enFactura && actual) actual.remove()
+    if (!enFactura && actual) (actual.closest("." + CLASE_CAJA) || actual).remove()
   }
 
   // Alegra es una SPA: la URL cambia sin recargar.
