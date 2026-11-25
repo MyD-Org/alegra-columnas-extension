@@ -133,6 +133,8 @@
     renderColumnas()
   })
 
+  document.getElementById("tirilla").addEventListener("click", () => chrome.runtime.openOptionsPage())
+
   renderDocs()
   renderFamilias()
   renderColumnas()

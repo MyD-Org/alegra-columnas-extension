@@ -15,6 +15,34 @@ Es solo visual: no modifica el documento ni envía datos. La configuración se g
 `chrome.storage.sync` (viaja con la cuenta de Chrome) y se aplica al instante en las pestañas
 abiertas.
 
+## Tirilla de facturas (80 mm)
+
+En la vista de una factura de venta (`/invoice/view/id/…`) aparece el botón **Imprimir tirilla**.
+Abre una pestaña con la factura en formato ticket de 80 mm y lanza la impresión (elija la
+impresora térmica, por ejemplo `Gadnic_Tickets`, con márgenes «Ninguno»).
+
+- Lee la factura de la **API de Alegra** (solo consultas, nunca crea ni modifica nada).
+- Factura **A**: precios netos e IVA discriminado por alícuota. **B**: precios con IVA y la
+  leyenda del Régimen de Transparencia Fiscal al Consumidor (Ley 27.743). **X**: se marca como no
+  válida como factura.
+- Si es electrónica, imprime el **QR de ARCA**, el **CAE** y su vencimiento.
+
+### Configuración (una vez por Chrome)
+
+Ícono de la extensión → **Configurar cuentas de la tirilla** (o clic derecho → Opciones). Cargue
+una cuenta por empresa de Alegra (por ejemplo Iguazú y Mar del Plata):
+
+- Correo del usuario y **token de API** (Alegra → Configuración → Integraciones con otros
+  sistemas → API). Se guardan solo en este Chrome (`chrome.storage.local`), no se sincronizan.
+- Datos fiscales del encabezado (razón social, CUIT, domicilio, condición frente al IVA, Ingresos
+  Brutos, inicio de actividades) y un logo opcional. **Probar conexión** completa lo que pueda
+  desde Alegra.
+
+Si el mismo número interno de factura existe en las dos empresas, se desempata con el número del
+comprobante que se ve en pantalla; si no alcanza, la tirilla pregunta cuál imprimir.
+
+Conviene que el contador revise el primer modelo impreso.
+
 ## Instalación (cada Chrome del equipo)
 
 1. Descargue este repo (botón **Code → Download ZIP**) y descomprímalo, o clónelo.
@@ -32,6 +60,10 @@ Chrome (fíjela con el ícono de pieza de rompecabezas).
 - `config.js`: catálogo de columnas, pantallas, valores por defecto y lectura/escritura de la config.
 - `content.js`: arma la grilla en la página.
 - `popup.html` / `popup.js`: panel de opciones.
+- `tirilla-boton.js`: botón «Imprimir tirilla» en la factura.
+- `tirilla.html` / `tirilla.js`: arma e imprime la tirilla.
+- `opciones.html` / `opciones.js` / `cuentas.js`: cuentas de Alegra de la tirilla.
+- `vendor/qrcode.js`: generador de QR (qrcode-generator 1.4.4, MIT, Kazuhiko Arase).
 
 ## Cómo funciona
 
