@@ -14,19 +14,71 @@
     timer = setTimeout(() => ($estado.textContent = ""), 1500)
   }
 
-  /** Datos de /company → campos del encabezado que estén vacíos. */
-  function completarDesdeEmpresa(cuenta, empresa) {
+  /** 20123456789 → 20-12345678-9 */
+  function formatearCuit(s) {
+    const d = String(s || "").replace(/\D/g, "")
+    return d.length === 11 ? `${d.slice(0, 2)}-${d.slice(2, 10)}-${d.slice(10)}` : String(s || "")
+  }
+
+  /** El «régimen» de Alegra Argentina → leyenda de condición frente al IVA. */
+  function condicionIva(regime) {
+    const r = String(regime || "").toLowerCase()
+    if (!r) return ""
+    if (r.includes("monotribut")) return "Responsable Monotributo"
+    if (r.includes("exent")) return "IVA Exento"
+    if (r.includes("general") || r.includes("inscript") || r.includes("responsable")) return "IVA Responsable Inscripto"
+    return String(regime)
+  }
+
+  /** Logo de Alegra (URL) → data URL. Si no se puede bajar, se ignora. */
+  async function logoComoDataUrl(url) {
+    try {
+      const r = await fetch(url)
+      if (!r.ok) return ""
+      const blob = await r.blob()
+      if (!blob.type.startsWith("image/") || blob.size > 300_000) return ""
+      return await new Promise((ok) => {
+        const lector = new FileReader()
+        lector.onload = () => ok(String(lector.result))
+        lector.onerror = () => ok("")
+        lector.readAsDataURL(blob)
+      })
+    } catch {
+      return ""
+    }
+  }
+
+  /**
+   * Datos de /company → campos del encabezado. Completa los vacíos y corrige los que una
+   * versión anterior cargó en crudo (CUIT sin guiones, «Régimen general»).
+   * Ingresos Brutos e inicio de actividades no vienen en la API: se cargan a mano.
+   */
+  async function completarDesdeEmpresa(cuenta, empresa) {
     if (!empresa || typeof empresa !== "object") return
     const dir = empresa.address
     const domicilio =
-      typeof dir === "string" ? dir : dir ? [dir.address, dir.city, dir.province || dir.department].filter(Boolean).join(", ") : ""
+      typeof dir === "string"
+        ? dir
+        : dir
+          ? [dir.address || dir.description, dir.city, dir.province || dir.department].filter(Boolean).join(", ")
+          : ""
+    const idObj = empresa.identificationObject || {}
+    const cuit = idObj.number ? `${idObj.number}${idObj.dv && String(idObj.number).length === 10 ? idObj.dv : ""}` : empresa.identification
     const sugeridos = {
       razonSocial: empresa.name,
-      cuit: empresa.identification,
+      cuit: cuit ? formatearCuit(cuit) : "",
       domicilio,
-      condicionIva: typeof empresa.regime === "string" ? empresa.regime : "",
+      condicionIva: condicionIva(empresa.regime),
     }
-    for (const [k, v] of Object.entries(sugeridos)) if (!cuenta[k] && v) cuenta[k] = String(v)
+    for (const [k, v] of Object.entries(sugeridos)) {
+      if (!v) continue
+      const actual = cuenta[k] || ""
+      const crudo = (k === "condicionIva" && /^r[ée]gimen/i.test(actual)) || (k === "cuit" && /^\d{11}$/.test(actual))
+      if (!actual || crudo) cuenta[k] = String(v)
+    }
+    if (!cuenta.logo && typeof empresa.logo === "string" && /^https:\/\//.test(empresa.logo)) {
+      cuenta.logo = await logoComoDataUrl(empresa.logo)
+    }
   }
 
   function render() {
@@ -115,10 +167,16 @@
             const { status, datos } = await TIRILLA_CUENTAS.get(cuenta, "/company")
             if (status === 401 || status === 403) throw new Error("El correo o el token no son válidos.")
             if (status !== 200) throw new Error(`Alegra respondió ${status}.`)
-            completarDesdeEmpresa(cuenta, datos)
+            await completarDesdeEmpresa(cuenta, datos)
             await guardar("Conexión correcta")
-            res.textContent = `Conectado a ${datos && datos.name ? datos.name : "Alegra"}.`
             render()
+            const faltan = TIRILLA_CUENTAS.CAMPOS.filter((c) => !["alias", "nombreFantasia"].includes(c.id) && !cuenta[c.id])
+            const $res = document.querySelectorAll(".cuenta")[cuentas.indexOf(cuenta)]?.querySelector(".acciones .estado")
+            if ($res) {
+              $res.textContent =
+                `Conectado a ${datos && datos.name ? datos.name : "Alegra"}.` +
+                (faltan.length ? ` Complete a mano: ${faltan.map((c) => c.titulo).join(", ")}.` : "")
+            }
           } catch (e) {
             res.className = "estado error"
             res.textContent = e.message || "No se pudo conectar con Alegra."
