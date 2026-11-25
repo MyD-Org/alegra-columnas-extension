@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tirilla de facturas: cuentas de Alegra</title>
+    <style>
+      :root {
+        --texto: #1e293b;
+        --suave: #64748b;
+        --borde: #e2e8f0;
+        --fondo: #ffffff;
+        --acento: #30aba9;
+        --fila: #f8fafc;
+        --error: #b91c1c;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 24px 16px 48px; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texto); background: var(--fila); }
+      main { max-width: 640px; margin: 0 auto; }
+      h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
+      .nota { margin: 0 0 20px; color: var(--suave); }
+      .cuenta { margin-bottom: 16px; padding: 16px; border: 1px solid var(--borde); border-radius: 10px; background: var(--fondo); }
+      .cuenta h2 { margin: 0 0 12px; font-size: 15px; }
+      .grilla { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+      .grilla .ancho { grid-column: 1 / -1; }
+      label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--suave); }
+      input { font: inherit; font-size: 14px; color: var(--texto); padding: 6px 8px; border: 1px solid var(--borde); border-radius: 6px; background: var(--fondo); }
+      input:focus { outline: 2px solid var(--acento); outline-offset: -1px; }
+      .ayuda { font-size: 11px; }
+      .acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+      button { font: inherit; padding: 6px 12px; color: var(--texto); background: var(--fondo); border: 1px solid var(--borde); border-radius: 6px; cursor: pointer; }
+      button:hover { border-color: var(--acento); color: var(--acento); }
+      button.primario { background: var(--acento); border-color: var(--acento); color: #fff; }
+      button.peligro:hover { border-color: var(--error); color: var(--error); }
+      .estado { font-size: 12px; color: var(--suave); }
+      .estado.error { color: var(--error); }
+      .logo { display: flex; align-items: center; gap: 10px; }
+      .logo img { max-height: 48px; max-width: 160px; border: 1px solid var(--borde); border-radius: 4px; background: #fff; }
+      @media (max-width: 520px) { .grilla { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Tirilla de facturas</h1>
+      <p class="nota">
+        Cargue una cuenta por cada empresa de Alegra (por ejemplo Iguazú y Mar del Plata). El token queda guardado solo en
+        este Chrome. Los datos fiscales se imprimen en el encabezado de la tirilla.
+      </p>
+      <div id="cuentas"></div>
+      <div class="acciones">
+        <button id="agregar" type="button">Agregar cuenta</button>
+        <span id="estado" class="estado"></span>
+      </div>
+    </main>
+    <script src="cuentas.js"></script>
+    <script src="opciones.js"></script>
+  </body>
+</html>

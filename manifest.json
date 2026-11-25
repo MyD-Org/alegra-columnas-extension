@@ -1,18 +1,29 @@
 {
   "manifest_version": 3,
-  "name": "Alegra: columnas de ítems",
-  "version": "0.3.0",
-  "description": "Personaliza la grilla de productos de presupuestos, remitos y facturas de Alegra: columnas con IVA, ocultar y reordenar.",
+  "name": "Alegra: columnas de ítems y tirilla",
+  "version": "0.4.0",
+  "description": "Personaliza la grilla de productos de Alegra (columnas con IVA, ocultar y reordenar) e imprime facturas en tirilla de 80 mm.",
   "permissions": ["storage"],
+  "host_permissions": ["https://api.alegra.com/*"],
   "action": {
     "default_title": "Columnas de Alegra",
     "default_popup": "popup.html"
   },
+  "options_ui": {
+    "page": "opciones.html",
+    "open_in_tab": true
+  },
   "content_scripts": [
     {
       "matches": ["https://app.alegra.com/*"],
-      "js": ["config.js", "content.js"],
+      "js": ["config.js", "content.js", "tirilla-boton.js"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["tirilla.html"],
+      "matches": ["https://app.alegra.com/*"]
     }
   ]
 }
