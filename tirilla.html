@@ -32,8 +32,8 @@
       .fila > :last-child { text-align: right; white-space: nowrap; }
       .item { margin-bottom: 3px; }
       .item .desc { word-break: break-word; }
-      .qr { display: block; width: 32mm; height: 32mm; margin: 4px auto 2px; }
-      .qr svg { width: 100%; height: 100%; }
+      /* Tamaño exacto en mm desde tirilla.js; sin suavizado para que la térmica imprima módulos limpios. */
+      .qr { display: block; margin: 2px auto 0; image-rendering: pixelated; image-rendering: crisp-edges; }
     </style>
   </head>
   <body>
