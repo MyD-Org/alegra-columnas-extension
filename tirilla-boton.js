@@ -16,6 +16,24 @@
 
   const RUTA = /^\/invoice\/view\/id\/(\d+)/
 
+  /**
+   * Al recargar la extensión con Alegra abierto, este script viejo sigue corriendo pero ya
+   * no puede usar chrome.* («Extension context invalidated»). En ese caso se apaga solo.
+   */
+  const vivo = () => {
+    try {
+      return !!(chrome.runtime && chrome.runtime.id)
+    } catch {
+      return false
+    }
+  }
+  let observador = null
+  let intervalo = null
+  function apagar() {
+    observador && observador.disconnect()
+    clearInterval(intervalo)
+  }
+
   /** Número del comprobante visible en pantalla (p. ej. 00006-00000006), si lo hay. */
   function numeroEnPantalla() {
     const m = (document.querySelector("main") || document.body).innerText.match(/\b\d{4,5}-\d{8}\b/)
@@ -23,6 +41,10 @@
   }
 
   function abrirTirilla(id, numero) {
+    if (!vivo()) {
+      alert("La extensión se actualizó. Recargue esta página (F5) y vuelva a intentarlo.")
+      return
+    }
     const q = new URLSearchParams({ id, numero: numero || "" })
     window.open(chrome.runtime.getURL(`tirilla.html?${q}`), "_blank")
   }
@@ -57,7 +79,8 @@
     menu.append(b)
   }
 
-  new MutationObserver(() => {
+  observador = new MutationObserver(() => {
+    if (!vivo()) return apagar()
     if (RUTA.test(location.pathname)) {
       // Alegra puede redibujar la barra y llevarse el botón: se vuelve a crear.
       const b = document.getElementById(ID)
@@ -67,7 +90,8 @@
     }
     if (!/^\/invoice\/?$/.test(location.pathname)) return
     document.querySelectorAll(SEL_MENU).forEach(agregarAlMenu)
-  }).observe(document.body, { childList: true, subtree: true })
+  })
+  observador.observe(document.body, { childList: true, subtree: true })
 
   // ── Botón flotante en la vista de la factura ─────────────────────────────
 
@@ -159,7 +183,8 @@
 
   // Alegra es una SPA: la URL cambia sin recargar.
   let ultima = ""
-  setInterval(() => {
+  intervalo = setInterval(() => {
+    if (!vivo()) return apagar()
     if (location.pathname !== ultima) {
       ultima = location.pathname
       sincronizar()

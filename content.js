@@ -558,14 +558,36 @@
     sincronizar()
   }
 
+  // Al recargar la extensión con Alegra abierto, esta instancia vieja queda sin chrome.*
+  // («Extension context invalidated»): se apaga sola y la nueva limpia lo que dejó.
+  const vivo = () => {
+    try {
+      return !!(chrome.runtime && chrome.runtime.id)
+    } catch {
+      return false
+    }
+  }
+  let apagada = false
+  const alCambiar = () => {
+    if (apagada) return
+    if (!vivo()) {
+      apagada = true
+      observador.disconnect()
+      clearInterval(intervalo)
+      return
+    }
+    sincronizar()
+  }
+
   chrome.storage.onChanged.addListener((cambios, area) => {
     if (area === "sync" && cambios.config) cargarConfig()
   })
-  new MutationObserver(sincronizar).observe(document.body, { childList: true, subtree: true, characterData: true })
+  const observador = new MutationObserver(alCambiar)
+  observador.observe(document.body, { childList: true, subtree: true, characterData: true })
   // Inputs y el select de impuesto cambian .value (propiedad, no DOM): no disparan el observer.
   for (const ev of ["input", "change", "click", "keyup"]) {
-    document.addEventListener(ev, () => setTimeout(sincronizar, 60), true)
+    document.addEventListener(ev, () => setTimeout(alCambiar, 60), true)
   }
-  setInterval(sincronizar, 1000)
+  const intervalo = setInterval(alCambiar, 1000)
   cargarConfig()
 })()
